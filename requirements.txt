@@ -1,0 +1,6 @@
+streamlit
+paddleocr
+opencv-python
+pillow
+pandas
+streamlit-drawable-canvas
