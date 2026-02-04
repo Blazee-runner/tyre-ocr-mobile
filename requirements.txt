@@ -1,6 +1,8 @@
 streamlit
-paddleocr
-opencv-python
-pillow
-pandas
 streamlit-drawable-canvas
+paddleocr
+opencv-python-headless
+pillow
+numpy
+pandas
+
