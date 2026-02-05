@@ -130,8 +130,10 @@ if run_ocr:
                 continue
 
             roi = img_np[y1:y2, x1:x2]
-
-
+            
+            # 👇 DEBUG LINE (TEMPORARY)
+            st.image(roi, caption=f"ROI {roi_id}", width=300)
+            
             # Draw ROI box
             draw.rectangle([x1, y1, x2, y2], outline=(255, 0, 0), width=2)
 
