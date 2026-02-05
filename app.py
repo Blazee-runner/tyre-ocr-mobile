@@ -39,8 +39,13 @@ if not camera_image:
     st.stop()
 
 img = Image.open(camera_image)
+if keep_exif:
+    try:
+        img = ImageOps.exif_transpose(img)
+    except Exception:
+        pass
 
-
+img = img.convert("RGB")  # 👈 ADD THIS
 # =====================================================
 # Load image
 # =====================================================
@@ -201,3 +206,4 @@ if run_ocr:
             f"Details: {e}\n\n"
             "Make sure the OCR backend is running and reachable."
         )
+
