@@ -1,20 +1,17 @@
+# Core
 streamlit
 streamlit-drawable-canvas
 
-# PaddleOCR stack (PINNED)
-paddleocr==2.7.0
-paddlepaddle-cpu==2.5.2
-
-# OpenCV (headless, cloud-safe)
-opencv-python-headless==4.8.1.78
-
-# NumPy MUST be < 2.0
+# NumPy (must be < 2.0)
 numpy==1.26.4
 
-# OCR dependencies
-shapely
-pyclipper
+# OpenCV (cloud-safe)
+opencv-python-headless==4.8.1.78
 
+# PaddleOCR (cloud tested)
+paddleocr==2.7.0
+
+# Pillow + data
 pillow
 pandas
 
