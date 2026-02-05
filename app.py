@@ -148,8 +148,9 @@ if run_ocr:
             # Canvas → original coordinates
             left = int(obj["left"] / scale)
             top = int(obj["top"] / scale)
-            width = int(obj["width"] / scale)
-            height = int(obj["height"] / scale)
+            width = int(obj["width"] * obj.get("scaleX", 1) / scale)
+            height = int(obj["height"] * obj.get("scaleY", 1) / scale)
+
 
 
             x1 = max(0, left)
@@ -161,16 +162,7 @@ if run_ocr:
                 continue
             roi = img_np[y1:y2, x1:x2]
             
-            # grayscale + contrast
-            roi_gray = Image.fromarray(roi).convert("L")
-            roi_gray = ImageOps.autocontrast(roi_gray)
-            roi = np.array(roi_gray)
-            
-            # 🔥 auto-rotate vertical text
-            h, w = roi.shape[:2]
-            if h > w * 1.2:
-                roi = np.rot90(roi, k=1)
-            
+
             # debug (remove later)
             st.image(roi, caption=f"ROI {roi_id}", width=300)
             
@@ -247,6 +239,7 @@ if run_ocr:
             f"Details: {e}\n\n"
             "Make sure the OCR backend is running and reachable."
         )
+
 
 
 
