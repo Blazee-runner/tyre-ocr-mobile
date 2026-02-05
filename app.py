@@ -89,6 +89,16 @@ st.write(f"**{len(objects)} ROI(s) drawn**")
 
 def call_ocr_api(roi_np):
     roi_pil = Image.fromarray(roi_np)
+
+    # 🔥 UPSCALE small ROIs (VERY IMPORTANT)
+    w, h = roi_pil.size
+    if max(w, h) < 800:
+        scale = 800 / max(w, h)
+        roi_pil = roi_pil.resize(
+            (int(w * scale), int(h * scale)),
+            Image.BICUBIC
+        )
+
     buf = BytesIO()
     roi_pil.save(buf, format="JPEG")
     buf.seek(0)
@@ -97,6 +107,7 @@ def call_ocr_api(roi_np):
     r = requests.post(OCR_API_URL, files=files, timeout=60)
     r.raise_for_status()
     return r.json()["detections"]
+
 
 # =====================================================
 # OCR
@@ -209,6 +220,7 @@ if run_ocr:
             f"Details: {e}\n\n"
             "Make sure the OCR backend is running and reachable."
         )
+
 
 
 
