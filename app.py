@@ -141,18 +141,21 @@ if run_ocr:
                 continue
             roi = img_np[y1:y2, x1:x2]
             
-            # 🔥 ADD THESE 3 LINES (RIGHT HERE)
+            # grayscale + contrast
             roi_gray = Image.fromarray(roi).convert("L")
             roi_gray = ImageOps.autocontrast(roi_gray)
             roi = np.array(roi_gray)
             
-            # (optional debug – remove later)
+            # 🔥 auto-rotate vertical text
+            h, w = roi.shape[:2]
+            if h > w * 1.2:
+                roi = np.rot90(roi, k=1)
+            
+            # debug (remove later)
             st.image(roi, caption=f"ROI {roi_id}", width=300)
             
-            # Draw ROI box
-            draw.rectangle([x1, y1, x2, y2], outline=(255, 0, 0), width=2)
-            
             detections = call_ocr_api(roi)
+
 
             for det in detections:
                 box = det["box"]
@@ -224,6 +227,7 @@ if run_ocr:
             f"Details: {e}\n\n"
             "Make sure the OCR backend is running and reachable."
         )
+
 
 
 
