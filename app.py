@@ -117,8 +117,9 @@ if run_ocr:
             # Canvas → original coordinates
             left = int(obj["left"] / scale)
             top = int(obj["top"] / scale)
-            width = int(obj["width"] * obj.get("scaleX", 1) / scale)
-            height = int(obj["height"] * obj.get("scaleY", 1) / scale)
+            width = int(obj["width"] / scale)
+            height = int(obj["height"] / scale)
+
 
             x1 = max(0, left)
             y1 = max(0, top)
@@ -206,5 +207,6 @@ if run_ocr:
             f"Details: {e}\n\n"
             "Make sure the OCR backend is running and reachable."
         )
+
 
 
