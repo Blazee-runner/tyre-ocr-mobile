@@ -153,12 +153,12 @@ if run_ocr:
             
             h, w = roi.shape[:2]
             if h < 40 or w < 40:
-                st.warning(f"ROI {roi_id} too small, skipped")
                 continue
             
-            # 🔄 Auto-rotate vertical tyre text (CRITICAL)
+            # 🔄 Auto-rotate vertical tyre text
             if h > w * 1.2:
                 roi = np.rot90(roi, k=1)
+
 
             # debug (remove later)
             st.image(roi, caption=f"ROI {roi_id}", width=300)
@@ -236,6 +236,7 @@ if run_ocr:
             f"Details: {e}\n\n"
             "Make sure the OCR backend is running and reachable."
         )
+
 
 
 
