@@ -88,17 +88,37 @@ objects = canvas.json_data["objects"] if canvas.json_data else []
 st.write(f"**{len(objects)} ROI(s) drawn**")
 
 def call_ocr_api(roi_np):
-    roi_pil = Image.fromarray(roi_np)
+    # Convert to PIL
+    roi_pil = Image.fromarray(roi_np).convert("L")
 
-    # 🔥 UPSCALE small ROIs (VERY IMPORTANT)
+    # 1️⃣ Auto contrast (CRITICAL)
+    roi_pil = ImageOps.autocontrast(roi_pil)
+
+    # 2️⃣ Upscale small ROIs
     w, h = roi_pil.size
-    if max(w, h) < 800:
-        scale = 800 / max(w, h)
+    if max(w, h) < 1000:
+        scale = 1000 / max(w, h)
         roi_pil = roi_pil.resize(
             (int(w * scale), int(h * scale)),
             Image.BICUBIC
         )
 
+    # 3️⃣ Convert back to numpy
+    roi_np = np.array(roi_pil)
+
+    # 4️⃣ Adaptive threshold (embossed text killer)
+    import cv2
+    roi_np = cv2.adaptiveThreshold(
+        roi_np,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        31,
+        5
+    )
+
+    # Convert to JPEG for API
+    roi_pil = Image.fromarray(roi_np)
     buf = BytesIO()
     roi_pil.save(buf, format="JPEG")
     buf.seek(0)
@@ -227,6 +247,7 @@ if run_ocr:
             f"Details: {e}\n\n"
             "Make sure the OCR backend is running and reachable."
         )
+
 
 
 
