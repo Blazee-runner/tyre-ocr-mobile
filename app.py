@@ -108,14 +108,16 @@ def call_ocr_api(roi_np):
 
     # 4️⃣ Adaptive threshold (embossed text killer)
     import cv2
+    # Stronger threshold for OnePlus camera images
     roi_np = cv2.adaptiveThreshold(
         roi_np,
         255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        31,
-        5
+        cv2.ADAPTIVE_THRESH_MEAN_C,
+        cv2.THRESH_BINARY_INV,
+        51,
+        7
     )
+
 
     # Convert to JPEG for API
     roi_pil = Image.fromarray(roi_np)
@@ -239,6 +241,7 @@ if run_ocr:
             f"Details: {e}\n\n"
             "Make sure the OCR backend is running and reachable."
         )
+
 
 
 
