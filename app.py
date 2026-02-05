@@ -11,6 +11,7 @@ import requests
 
 OCR_API_URL = "https://nigel-orthodontic-unhypothetically.ngrok-free.dev/ocr"
 
+
 # =====================================================
 # Page config
 # =====================================================
@@ -200,4 +201,3 @@ if run_ocr:
             f"Details: {e}\n\n"
             "Make sure the OCR backend is running and reachable."
         )
-
