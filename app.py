@@ -139,15 +139,19 @@ if run_ocr:
 
             if x2 <= x1 or y2 <= y1:
                 continue
-
             roi = img_np[y1:y2, x1:x2]
             
-            # 👇 DEBUG LINE (TEMPORARY)
+            # 🔥 ADD THESE 3 LINES (RIGHT HERE)
+            roi_gray = Image.fromarray(roi).convert("L")
+            roi_gray = ImageOps.autocontrast(roi_gray)
+            roi = np.array(roi_gray)
+            
+            # (optional debug – remove later)
             st.image(roi, caption=f"ROI {roi_id}", width=300)
             
             # Draw ROI box
             draw.rectangle([x1, y1, x2, y2], outline=(255, 0, 0), width=2)
-
+            
             detections = call_ocr_api(roi)
 
             for det in detections:
@@ -220,6 +224,7 @@ if run_ocr:
             f"Details: {e}\n\n"
             "Make sure the OCR backend is running and reachable."
         )
+
 
 
 
