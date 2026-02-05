@@ -1,17 +1,7 @@
-# Core
 streamlit
 streamlit-drawable-canvas
-
-# NumPy (must be < 2.0)
-numpy==1.26.4
-
-# OpenCV (cloud-safe)
-opencv-python-headless==4.8.1.78
-
-# PaddleOCR (cloud tested)
-paddleocr==2.7.0
-
-# Pillow + data
+opencv-python-headless
+numpy
 pillow
 pandas
-
+requests
