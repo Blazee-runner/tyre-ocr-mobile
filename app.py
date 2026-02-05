@@ -177,7 +177,7 @@ if run_ocr:
         # Outputs
         # =====================================================
         st.subheader("Annotated Image (Original Resolution)")
-        st.image(annotated, use_container_width=True)
+        st.image(annotated, use_column_width=True)
 
         img_buf = BytesIO()
         annotated.save(img_buf, format="PNG")
@@ -206,4 +206,5 @@ if run_ocr:
             f"Details: {e}\n\n"
             "Make sure the OCR backend is running and reachable."
         )
+
 
