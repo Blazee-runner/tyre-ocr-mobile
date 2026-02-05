@@ -88,41 +88,28 @@ objects = canvas.json_data["objects"] if canvas.json_data else []
 st.write(f"**{len(objects)} ROI(s) drawn**")
 
 def call_ocr_api(roi_np):
-    # Convert to PIL
-    roi_pil = Image.fromarray(roi_np).convert("L")
+    import cv2
 
-    # 1️⃣ Auto contrast (CRITICAL)
+    roi_pil = Image.fromarray(roi_np).convert("L")
     roi_pil = ImageOps.autocontrast(roi_pil)
 
-    # 2️⃣ Upscale small ROIs
     w, h = roi_pil.size
-    if max(w, h) < 1000:
-        scale = 1000 / max(w, h)
+    if max(w, h) < 1200:
+        scale = 1200 / max(w, h)
         roi_pil = roi_pil.resize(
             (int(w * scale), int(h * scale)),
             Image.BICUBIC
         )
 
-    # 3️⃣ Convert back to numpy
     roi_np = np.array(roi_pil)
 
-    # 4️⃣ Adaptive threshold (embossed text killer)
-    import cv2
-    # Stronger threshold for OnePlus camera images
-    roi_np = cv2.adaptiveThreshold(
-        roi_np,
-        255,
-        cv2.ADAPTIVE_THRESH_MEAN_C,
-        cv2.THRESH_BINARY_INV,
-        51,
-        7
-    )
+    # CLAHE only (NO threshold)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    roi_np = clahe.apply(roi_np)
 
-
-    # Convert to JPEG for API
     roi_pil = Image.fromarray(roi_np)
     buf = BytesIO()
-    roi_pil.save(buf, format="JPEG")
+    roi_pil.save(buf, format="JPEG", quality=95)
     buf.seek(0)
 
     files = {"file": ("roi.jpg", buf, "image/jpeg")}
@@ -164,6 +151,14 @@ if run_ocr:
                 continue
             roi = img_np[y1:y2, x1:x2]
             
+            h, w = roi.shape[:2]
+            if h < 40 or w < 40:
+                st.warning(f"ROI {roi_id} too small, skipped")
+                continue
+            
+            # 🔄 Auto-rotate vertical tyre text (CRITICAL)
+            if h > w * 1.2:
+                roi = np.rot90(roi, k=1)
 
             # debug (remove later)
             st.image(roi, caption=f"ROI {roi_id}", width=300)
@@ -241,6 +236,7 @@ if run_ocr:
             f"Details: {e}\n\n"
             "Make sure the OCR backend is running and reachable."
         )
+
 
 
 
