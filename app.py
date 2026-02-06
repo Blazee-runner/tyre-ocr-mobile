@@ -32,7 +32,7 @@ if not OCR_API_URL:
     st.error("OCR_API_URL is not set. Add it in Streamlit secrets or ENV.")
     st.stop()
 
-st.subheader("Capture from Phone Camera")
+st.subheader("Capturee from Phone Camera")
 cam = st.camera_input("Take a photo")
 
 st.subheader("Or Upload Image")
@@ -134,5 +134,6 @@ if run_ocr:
 
     except Exception as e:
         st.error(f"OCR failed: {e}")
+
 
 
