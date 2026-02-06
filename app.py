@@ -73,7 +73,7 @@ def call_ocr_api(pil_img: Image.Image):
         raise RuntimeError(f"Backend HTTP {r.status_code}: {r.text[:400]}")
     return r.json()
 
-run_ocr = st.button("Run OCR (Annotate + CSV)")
+run_ocr = st.button("Run OCR")
 
 if run_ocr:
     try:
@@ -125,7 +125,7 @@ if run_ocr:
         st.image(annotated)
         
         if detected_texts:
-            st.subheader("Detected Text (Combined)")
+            st.subheader("Detected Text")
             combined_text = " | ".join(detected_texts)
             st.code(combined_text)
 
@@ -135,6 +135,7 @@ if run_ocr:
 
     except Exception as e:
         st.error(f"OCR failed: {e}")
+
 
 
 
