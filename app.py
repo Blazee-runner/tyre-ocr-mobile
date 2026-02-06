@@ -142,7 +142,11 @@ if run_ocr:
             draw.rectangle([x1, y1, x2, y2], outline=(255, 0, 0), width=2)
 
             api_out = call_ocr_api(roi_pil)
+            status = api_out.get("status")
+            message = api_out.get("message")
             detections = api_out.get("detections", [])
+            
+            st.info(f"OCR status: {status} — {message}")
             dbg = api_out.get("debug", {})
             st.write(f"ROI {roi_id} backend debug:", dbg)
 
@@ -202,4 +206,5 @@ if run_ocr:
 
     except Exception as e:
         st.error(f"OCR failed: {e}")
+
 
