@@ -1,6 +1,7 @@
 import warnings
 warnings.filterwarnings("ignore")
 
+import os
 import streamlit as st
 from streamlit_drawable_canvas import st_canvas
 from PIL import Image, ImageOps, ImageDraw, ImageFont
@@ -9,18 +10,16 @@ import pandas as pd
 from io import BytesIO
 import requests
 
-OCR_API_URL = "https://nigel-orthodontic-unhypothetically.ngrok-free.dev/ocr"
+# Read backend URL from Streamlit Secrets or ENV
+OCR_API_URL = None
+if "OCR_API_URL" in st.secrets:
+    OCR_API_URL = st.secrets["OCR_API_URL"]
+else:
+    OCR_API_URL = os.getenv("OCR_API_URL", "").strip()
 
-
-# =====================================================
-# Page config
-# =====================================================
 st.set_page_config(page_title="ROI_MRF", layout="wide")
-st.title("ROI_MRF – Any Image Size OCR")
+st.title("ROI_MRF – Mobile Camera OCR (Hosted)")
 
-# =====================================================
-# Sidebar
-# =====================================================
 with st.sidebar:
     st.header("ROI Settings")
     stroke_width = st.slider("ROI border width", 1, 10, 3)
@@ -29,49 +28,50 @@ with st.sidebar:
     st.header("Display")
     max_canvas_width = st.slider("Max canvas width (px)", 600, 2500, 1200)
     keep_exif = st.checkbox("Respect EXIF orientation", True)
-# =====================================================
-# Upload
-# =====================================================
-camera_image = st.camera_input("Capture image using phone camera")
 
-if not camera_image:
-    st.info("Capture an image to start.")
+    st.header("Backend")
+    st.write("OCR API URL:")
+    st.code(OCR_API_URL or "NOT SET")
+
+if not OCR_API_URL:
+    st.error("OCR_API_URL is not set. Add it in Streamlit secrets or ENV.")
     st.stop()
 
-img = Image.open(camera_image)
+st.subheader("Capture from Phone Camera")
+cam = st.camera_input("Take a photo (works on HTTPS)")
+
+st.subheader("Or Upload Image")
+uploaded = st.file_uploader(
+    "Upload image",
+    type=["png", "jpg", "jpeg", "bmp", "tif", "tiff", "webp"]
+)
+
+if not cam and not uploaded:
+    st.info("Capture or upload an image to start.")
+    st.stop()
+
+# Choose source
+src = cam if cam else uploaded
+img = Image.open(src)
+
 if keep_exif:
     try:
         img = ImageOps.exif_transpose(img)
     except Exception:
         pass
 
-img = img.convert("RGB")  # 👈 ADD THIS
-# =====================================================
-# Load image
-# =====================================================
-if keep_exif:
-    try:
-        img = ImageOps.exif_transpose(img)
-    except Exception:
-        pass
-
+img = img.convert("RGB")
 orig_w, orig_h = img.size
 img_np = np.array(img)
 
-st.caption(f"Original image size: **{orig_w} × {orig_h}px**")
+st.caption(f"Original image: **{orig_w} × {orig_h}px**")
 
-# =====================================================
-# Scale image for canvas (display only)
-# =====================================================
+# Canvas scaling
 scale = min(1.0, max_canvas_width / orig_w)
 canvas_w = int(orig_w * scale)
 canvas_h = int(orig_h * scale)
-
 img_display = img.resize((canvas_w, canvas_h), Image.BILINEAR)
 
-# =====================================================
-# Canvas
-# =====================================================
 canvas = st_canvas(
     background_image=img_display,
     height=canvas_h,
@@ -84,101 +84,77 @@ canvas = st_canvas(
     key="roi_canvas",
 )
 
-objects = canvas.json_data["objects"] if canvas.json_data else []
+objects = canvas.json_data["objects"] if (canvas.json_data and "objects" in canvas.json_data) else []
 st.write(f"**{len(objects)} ROI(s) drawn**")
 
-def call_ocr_api(roi_np):
-    import cv2
-
-    roi_pil = Image.fromarray(roi_np).convert("L")
-    roi_pil = ImageOps.autocontrast(roi_pil)
-
-    w, h = roi_pil.size
-    if max(w, h) < 1200:
-        scale = 1200 / max(w, h)
-        roi_pil = roi_pil.resize(
-            (int(w * scale), int(h * scale)),
-            Image.BICUBIC
-        )
-
-    roi_np = np.array(roi_pil)
-
-    # CLAHE only (NO threshold)
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-    roi_np = clahe.apply(roi_np)
-
-    roi_pil = Image.fromarray(roi_np)
+def call_ocr_api(pil_img: Image.Image):
     buf = BytesIO()
-    roi_pil.save(buf, format="JPEG", quality=95)
+    pil_img.save(buf, format="PNG")
     buf.seek(0)
+    files = {"file": ("roi.png", buf, "image/png")}
+    r = requests.post(OCR_API_URL, files=files, timeout=120)
+    if r.status_code != 200:
+        raise RuntimeError(f"Backend HTTP {r.status_code}: {r.text[:400]}")
+    return r.json()
 
-    files = {"file": ("roi.jpg", buf, "image/jpeg")}
-    r = requests.post(OCR_API_URL, files=files, timeout=60)
-    r.raise_for_status()
-    return r.json()["detections"]
-
-
-# =====================================================
-# OCR
-# =====================================================
 run_ocr = st.button("Run OCR (Annotate + CSV)")
 
 if run_ocr:
     try:
-        # 🔑 ALWAYS convert to RGB before drawing
-        annotated = img.convert("RGB")
+        annotated = img.copy()
         draw = ImageDraw.Draw(annotated)
         font = ImageFont.load_default()
 
         rows = []
         total = 0
 
-        for roi_id, obj in enumerate(objects, start=1):
-            # Canvas → original coordinates
-            left = int(obj["left"] / scale)
-            top = int(obj["top"] / scale)
-            width = int(obj["width"] * obj.get("scaleX", 1) / scale)
-            height = int(obj["height"] * obj.get("scaleY", 1) / scale)
+        # If no ROI drawn -> OCR on full image
+        rois_to_process = objects if len(objects) > 0 else [{
+            "left": 0, "top": 0, "width": canvas_w, "height": canvas_h, "scaleX": 1, "scaleY": 1
+        }]
 
+        for roi_id, obj in enumerate(rois_to_process, start=1):
+            sx = abs(obj.get("scaleX", 1))
+            sy = abs(obj.get("scaleY", 1))
 
+            x1 = int(obj["left"] / scale)
+            y1 = int(obj["top"] / scale)
+            x2 = int((obj["left"] + obj["width"] * sx) / scale)
+            y2 = int((obj["top"] + obj["height"] * sy) / scale)
 
-            x1 = max(0, left)
-            y1 = max(0, top)
-            x2 = min(orig_w, x1 + width)
-            y2 = min(orig_h, y1 + height)
+            x1, x2 = sorted((x1, x2))
+            y1, y2 = sorted((y1, y2))
+
+            x1 = max(0, min(orig_w - 1, x1))
+            y1 = max(0, min(orig_h - 1, y1))
+            x2 = max(0, min(orig_w, x2))
+            y2 = max(0, min(orig_h, y2))
 
             if x2 <= x1 or y2 <= y1:
                 continue
-            roi = img_np[y1:y2, x1:x2]
-            
-            h, w = roi.shape[:2]
-            if h < 40 or w < 40:
-                continue
-            
-            # 🔄 Auto-rotate vertical tyre text
-            if h > w * 1.2:
-                roi = np.rot90(roi, k=1)
 
+            roi_pil = img.crop((x1, y1, x2, y2))
 
-            # debug (remove later)
-            st.image(roi, caption=f"ROI {roi_id}", width=300)
-            
-            detections = call_ocr_api(roi)
+            with st.expander(f"ROI {roi_id} preview ({x2-x1}×{y2-y1})", expanded=False):
+                st.image(roi_pil, use_container_width=True)
 
+            # Draw ROI box
+            draw.rectangle([x1, y1, x2, y2], outline=(255, 0, 0), width=2)
+
+            api_out = call_ocr_api(roi_pil)
+            detections = api_out.get("detections", [])
+            dbg = api_out.get("debug", {})
+            st.write(f"ROI {roi_id} backend debug:", dbg)
 
             for det in detections:
                 box = det["box"]
                 text = det["text"]
-                score = det["score"]
-
+                score = float(det["score"])
                 total += 1
-                # Map ROI-local box → global image
+
                 pts = [(int(x1 + p[0]), int(y1 + p[1])) for p in box]
 
-                # Draw polygon
                 draw.line(pts + [pts[0]], fill=(0, 255, 0), width=2)
-
-                # Draw text label
                 tx, ty = pts[0]
                 draw.text(
                     (tx, max(0, ty - 12)),
@@ -193,57 +169,36 @@ if run_ocr:
                     "roi_top": y1,
                     "roi_width": x2 - x1,
                     "roi_height": y2 - y1,
-                    "gx1": pts[0][0], "gy1": pts[0][1],
-                    "gx2": pts[1][0], "gy2": pts[1][1],
-                    "gx3": pts[2][0], "gy3": pts[2][1],
-                    "gx4": pts[3][0], "gy4": pts[3][1],
                     "text": text,
-                    "score": float(score),
+                    "score": score,
                 })
 
         st.success(f"OCR complete — {total} detections")
 
-        # =====================================================
-        # Outputs
-        # =====================================================
-        st.subheader("Annotated Image (Original Resolution)")
-        st.image(annotated, use_column_width=True)
+        st.subheader("Annotated Image")
+        st.image(annotated, use_container_width=True)
 
         img_buf = BytesIO()
         annotated.save(img_buf, format="PNG")
-
-        st.download_button(
-            "Download Annotated Image",
-            img_buf.getvalue(),
-            file_name="annotated.png",
-            mime="image/png"
-        )
+        st.download_button("Download Annotated Image", img_buf.getvalue(), "annotated.png", "image/png")
 
         df = pd.DataFrame(rows)
+        st.subheader("Detections Table")
+        st.dataframe(df, use_container_width=True)
+
         csv_buf = BytesIO()
         df.to_csv(csv_buf, index=False)
+        st.download_button("Download CSV", csv_buf.getvalue(), "ocr_results.csv", "text/csv")
 
-        st.download_button(
-            "Download OCR CSV",
-            csv_buf.getvalue(),
-            file_name="ocr_results.csv",
-            mime="text/csv"
-        )
+        # If still 0 -> show hint
+        if total == 0:
+            st.warning(
+                "0 detections. Try:\n"
+                "- Draw ROI tighter around text\n"
+                "- Ensure text is not blurry\n"
+                "- Increase light / reduce glare\n"
+                "- Try full image OCR (don’t draw ROI)"
+            )
 
     except Exception as e:
-        st.error(
-            "OCR failed.\n\n"
-            f"Details: {e}\n\n"
-            "Make sure the OCR backend is running and reachable."
-        )
-
-
-
-
-
-
-
-
-
-
-
+        st.error(f"OCR failed: {e}")
