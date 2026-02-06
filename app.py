@@ -122,7 +122,8 @@ if run_ocr:
                 "text": text,
                 "score": score,
             })
-
+        st.image(annotated)
+        
         if detected_texts:
             st.subheader("Detected Text (Combined)")
             combined_text = " | ".join(detected_texts)
@@ -130,10 +131,11 @@ if run_ocr:
 
 
         st.success(f"OCR complete — {total} detections")
-        st.image(annotated)
+
 
     except Exception as e:
         st.error(f"OCR failed: {e}")
+
 
 
 
