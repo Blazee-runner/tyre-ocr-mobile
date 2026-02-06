@@ -95,7 +95,9 @@ if run_ocr:
 
         st.info(f"OCR status: {status} — {message}")
 
-        for det in detections:
+        detected_texts = []
+
+        for idx, det in enumerate(detections, start=1):
             box = det["box"]
             text = det["text"]
             score = float(det["score"])
@@ -107,23 +109,30 @@ if run_ocr:
             tx, ty = pts[0]
             draw.text(
                 (tx, max(0, ty - 12)),
-                f"{text} ({score:.2f})",
+                f"{idx}. {text}",
                 fill=(255, 255, 0),
                 font=font
             )
 
+            detected_texts.append(text)
+
             rows.append({
                 "ROI": roi_id,
+                "detection_id": idx,
                 "text": text,
                 "score": score,
             })
+
+        if detected_texts:
+            st.subheader("Detected Text (Combined)")
+            combined_text = " | ".join(detected_texts)
+            st.code(combined_text)
+
 
         st.success(f"OCR complete — {total} detections")
         st.image(annotated)
 
     except Exception as e:
         st.error(f"OCR failed: {e}")
-
-
 
 
