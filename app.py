@@ -132,9 +132,29 @@ if run_ocr:
 
         st.success(f"OCR complete — {total} detections")
 
+        # =========================
+        # Table + CSV Download
+        # =========================
+        if rows:
+            df = pd.DataFrame(rows)
+        
+            st.subheader("Detections Table")
+            st.dataframe(df, use_container_width=True)
+        
+            csv_buf = BytesIO()
+            df.to_csv(csv_buf, index=False)
+        
+            st.download_button(
+                label="Download OCR CSV",
+                data=csv_buf.getvalue(),
+                file_name="ocr_results.csv",
+                mime="text/csv"
+            )
+
 
     except Exception as e:
         st.error(f"OCR failed: {e}")
+
 
 
 
