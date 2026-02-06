@@ -136,7 +136,7 @@ if run_ocr:
             roi_pil = img.crop((x1, y1, x2, y2))
 
             with st.expander(f"ROI {roi_id} preview ({x2-x1}×{y2-y1})", expanded=False):
-                st.image(roi_pil, use_container_width=True)
+                st.image(roi_pil)
 
             # Draw ROI box
             draw.rectangle([x1, y1, x2, y2], outline=(255, 0, 0), width=2)
@@ -176,7 +176,7 @@ if run_ocr:
         st.success(f"OCR complete — {total} detections")
 
         st.subheader("Annotated Image")
-        st.image(annotated, use_container_width=True)
+        st.image(annotated)
 
         img_buf = BytesIO()
         annotated.save(img_buf, format="PNG")
@@ -184,7 +184,7 @@ if run_ocr:
 
         df = pd.DataFrame(rows)
         st.subheader("Detections Table")
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df)
 
         csv_buf = BytesIO()
         df.to_csv(csv_buf, index=False)
@@ -202,3 +202,4 @@ if run_ocr:
 
     except Exception as e:
         st.error(f"OCR failed: {e}")
+
