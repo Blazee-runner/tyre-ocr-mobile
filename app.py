@@ -18,7 +18,7 @@ else:
     OCR_API_URL = os.getenv("OCR_API_URL", "").strip()
 
 st.set_page_config(page_title="ROI_MRF", layout="wide")
-st.title("ROI_MRF – Mobile Camera OCR (Hosted)")
+st.title("Mobile Camera OCR")
 
 with st.sidebar:
     st.header("ROI Settings")
@@ -38,7 +38,7 @@ if not OCR_API_URL:
     st.stop()
 
 st.subheader("Capture from Phone Camera")
-cam = st.camera_input("Take a photo (works on HTTPS)")
+cam = st.camera_input("Take a photo")
 
 st.subheader("Or Upload Image")
 uploaded = st.file_uploader(
@@ -135,9 +135,6 @@ if run_ocr:
 
             roi_pil = img.crop((x1, y1, x2, y2))
 
-            with st.expander(f"ROI {roi_id} preview ({x2-x1}×{y2-y1})", expanded=False):
-                st.image(roi_pil)
-
             # Draw ROI box
             draw.rectangle([x1, y1, x2, y2], outline=(255, 0, 0), width=2)
 
@@ -145,10 +142,8 @@ if run_ocr:
             status = api_out.get("status")
             message = api_out.get("message")
             detections = api_out.get("detections", [])
-            
+
             st.info(f"OCR status: {status} — {message}")
-            dbg = api_out.get("debug", {})
-            st.write(f"ROI {roi_id} backend debug:", dbg)
 
             for det in detections:
                 box = det["box"]
@@ -157,8 +152,8 @@ if run_ocr:
                 total += 1
 
                 pts = [(int(x1 + p[0]), int(y1 + p[1])) for p in box]
-
                 draw.line(pts + [pts[0]], fill=(0, 255, 0), width=2)
+
                 tx, ty = pts[0]
                 draw.text(
                     (tx, max(0, ty - 12)),
@@ -176,6 +171,7 @@ if run_ocr:
                     "text": text,
                     "score": score,
                 })
+
 
         st.success(f"OCR complete — {total} detections")
 
@@ -206,5 +202,4 @@ if run_ocr:
 
     except Exception as e:
         st.error(f"OCR failed: {e}")
-
 
