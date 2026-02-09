@@ -2,18 +2,13 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import os
-import threading
-from io import BytesIO
-
-import cv2
-import av
+import streamlit as st
+from PIL import Image, ImageOps, ImageDraw, ImageFont
 import numpy as np
 import pandas as pd
+from io import BytesIO
 import requests
-import streamlit as st
-from PIL import Image, ImageDraw, ImageFont
-
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, ClientSettings
+import cv2
 
 
 # ============================================================
@@ -44,36 +39,16 @@ def normalize_ocr_url(url: str) -> str:
         url += "/ocr"
     return url
 
-OCR_API_URL = (st.secrets.get("OCR_API_URL", "") if hasattr(st, "secrets") else "") or os.getenv("OCR_API_URL", "")
+OCR_API_URL = None
+if "OCR_API_URL" in st.secrets:
+    OCR_API_URL = str(st.secrets["OCR_API_URL"]).strip()
+else:
+    OCR_API_URL = os.getenv("OCR_API_URL", "").strip()
+
 OCR_API_URL = normalize_ocr_url(OCR_API_URL)
 
-
-# ============================================================
-# UI styling (clean scanner look)
-# ============================================================
 st.set_page_config(page_title="ROI_MRF", layout="wide")
-st.markdown(
-    """
-    <style>
-      .block-container { padding-top: 1rem; padding-bottom: 2rem; }
-      .scanner-title { font-size: 1.45rem; font-weight: 700; margin-bottom: 0.25rem; }
-      .scanner-sub { color: #9aa0a6; margin-top: 0; }
-      .stButton > button {
-        border-radius: 14px;
-        padding: 0.6rem 1rem;
-        font-weight: 700;
-      }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
-st.markdown('<div class="scanner-title">📷 Live Camera OCR Scanner</div>', unsafe_allow_html=True)
-st.markdown('<p class="scanner-sub">Only the horizontal band is sent to OCR.</p>', unsafe_allow_html=True)
-
-if not OCR_API_URL:
-    st.error("OCR_API_URL is not set. Add it in Streamlit secrets or ENV.")
-    st.stop()
+st.title("📷 Camera OCR (Scanner-style ROI band)")
 
 with st.sidebar:
     st.header("Scanner ROI")
@@ -81,11 +56,18 @@ with st.sidebar:
     band_center_pct = st.slider("Band center Y (%)", 0, 100, 50, 1)
 
     st.header("Scanner Effects")
-    blur_strength = st.slider("Blur strength", 1, 31, 17, 2)   # we force odd
+    blur_strength = st.slider("Blur strength", 1, 31, 17, 2)
     mask_darkness = st.slider("Mask darkness", 0.0, 0.9, 0.45, 0.05)
 
+    st.header("Display")
+    keep_exif = st.checkbox("Respect EXIF orientation", True)
+
     st.header("Backend")
-    st.code(OCR_API_URL)
+    st.code(OCR_API_URL or "NOT SET")
+
+if not OCR_API_URL:
+    st.error("OCR_API_URL is not set. Add it in Streamlit secrets or ENV.")
+    st.stop()
 
 
 def call_ocr_api(pil_img: Image.Image):
@@ -110,118 +92,91 @@ def compute_band(h: int, band_height_pct: int, band_center_pct: int):
     return y1, y2
 
 
-# ============================================================
-# Live video processor with blur + translucent mask + thin black lines
-# ============================================================
-class ScannerProcessor(VideoProcessorBase):
-    def __init__(self):
-        self.lock = threading.Lock()
-        self.latest_bgr = None
+def make_scanner_overlay(pil_img: Image.Image, y1: int, y2: int, blur_strength: int, mask_darkness: float):
+    """
+    Create scanner-look preview:
+      - ROI band sharp
+      - Outside ROI blurred + dark translucent mask
+      - Two thin black horizontal lines
+    Returns: overlay PIL (RGB)
+    """
+    rgb = np.array(pil_img.convert("RGB"))
+    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    h, w = bgr.shape[:2]
 
-        self.band_height_pct = 20
-        self.band_center_pct = 50
-        self.blur_strength = 17
-        self.mask_darkness = 0.45
+    k = int(blur_strength)
+    if k % 2 == 0:
+        k += 1
+    k = max(1, min(k, 51))
 
-    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
-        img = frame.to_ndarray(format="bgr24")
-        h, w = img.shape[:2]
+    blurred = cv2.GaussianBlur(bgr, (k, k), 0)
+    out = blurred.copy()
+    out[y1:y2] = bgr[y1:y2]  # keep band sharp
 
-        # store latest original frame for capture
-        with self.lock:
-            self.latest_bgr = img.copy()
+    # dark mask outside
+    alpha = float(mask_darkness)
+    if alpha > 0:
+        dark = np.zeros_like(out)
+        out[:y1] = cv2.addWeighted(out[:y1], 1 - alpha, dark[:y1], alpha, 0)
+        out[y2:] = cv2.addWeighted(out[y2:], 1 - alpha, dark[y2:], alpha, 0)
 
-        y1, y2 = compute_band(h, self.band_height_pct, self.band_center_pct)
+    # thin black lines
+    cv2.line(out, (0, y1), (w, y1), (0, 0, 0), 1)
+    cv2.line(out, (0, y2), (w, y2), (0, 0, 0), 1)
 
-        # Blur everywhere
-        k = int(self.blur_strength)
-        if k % 2 == 0:
-            k += 1
-        k = max(1, min(k, 51))
-        blurred = cv2.GaussianBlur(img, (k, k), 0)
-
-        # Start from blurred
-        out = blurred.copy()
-
-        # Keep band sharp
-        out[y1:y2, :, :] = img[y1:y2, :, :]
-
-        # Dark translucent mask outside band
-        alpha = float(self.mask_darkness)
-        if alpha > 0:
-            dark = np.zeros_like(out)
-            out[:y1] = cv2.addWeighted(out[:y1], 1 - alpha, dark[:y1], alpha, 0)
-            out[y2:] = cv2.addWeighted(out[y2:], 1 - alpha, dark[y2:], alpha, 0)
-
-        # ✅ Thin black lines (instead of green)
-        line_color = (0, 0, 0)     # black in BGR
-        thickness = 1              # thin
-        cv2.line(out, (0, y1), (w, y1), line_color, thickness)
-        cv2.line(out, (0, y2), (w, y2), line_color, thickness)
-
-        return av.VideoFrame.from_ndarray(out, format="bgr24")
-
-    def get_latest_frame(self):
-        with self.lock:
-            if self.latest_bgr is None:
-                return None
-            return self.latest_bgr.copy()
+    out_rgb = cv2.cvtColor(out, cv2.COLOR_BGR2RGB)
+    return Image.fromarray(out_rgb)
 
 
 # ============================================================
-# WebRTC settings
+# Camera capture
 # ============================================================
-client_settings = ClientSettings(
-    rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
-    media_stream_constraints={"video": True, "audio": False},
-)
+st.subheader("Capture")
+cam = st.camera_input("Take a photo")
 
-colA, colB = st.columns([3, 2], gap="large")
-with colA:
-    st.subheader("Live Camera Preview")
-    webrtc_ctx = webrtc_streamer(
-        key="scanner",
-        client_settings=client_settings,
-        video_processor_factory=ScannerProcessor,
-        async_processing=True,
-    )
+# Optional upload fallback
+uploaded = st.file_uploader("Or upload", type=["png", "jpg", "jpeg", "bmp", "tif", "tiff", "webp"])
 
-with colB:
-    st.subheader("Scan")
-    st.markdown("Align text/barcode inside the band and press **Run OCR**.")
-    run_ocr = st.button("Run OCR (send ROI band)")
+if not cam and not uploaded:
+    st.info("Take a photo (or upload) to continue.")
+    st.stop()
 
-# Push slider settings into processor (live)
-if webrtc_ctx.video_processor:
-    vp = webrtc_ctx.video_processor
-    vp.band_height_pct = band_height_pct
-    vp.band_center_pct = band_center_pct
-    vp.blur_strength = blur_strength
-    vp.mask_darkness = mask_darkness
+src = cam if cam else uploaded
+img = Image.open(src)
 
-st.divider()
+if keep_exif:
+    try:
+        img = ImageOps.exif_transpose(img)
+    except Exception:
+        pass
+
+img = img.convert("RGB")
+W, H = img.size
+st.caption(f"Captured image: **{W} × {H}px**")
+
+# Compute band in this captured image
+y1, y2 = compute_band(H, band_height_pct, band_center_pct)
+
+# Scanner-style preview
+preview = make_scanner_overlay(img, y1, y2, blur_strength, mask_darkness)
+
+# ROI band to send
+roi_pil = img.crop((0, y1, W, y2))
+
+c1, c2 = st.columns([2, 1], gap="large")
+with c1:
+    st.subheader("Scanner preview (after capture)")
+    st_image_auto(preview)
+
+with c2:
+    st.subheader("ROI band to OCR")
+    st_image_auto(roi_pil)
+    st.caption(f"Band Y: {y1} → {y2} (height={y2-y1}px)")
 
 
-# ============================================================
-# OCR action — show ONLY ROI band result (annotated)
-# ============================================================
+run_ocr = st.button("Run OCR (send ROI band)")
+
 if run_ocr:
-    if not webrtc_ctx.video_processor:
-        st.error("Camera not ready. Start the camera stream first.")
-        st.stop()
-
-    frame_bgr = webrtc_ctx.video_processor.get_latest_frame()
-    if frame_bgr is None:
-        st.error("No frame received yet. Wait 1–2 seconds and try again.")
-        st.stop()
-
-    h, w = frame_bgr.shape[:2]
-    y1, y2 = compute_band(h, band_height_pct, band_center_pct)
-
-    roi_bgr = frame_bgr[y1:y2, :, :]
-    roi_rgb = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2RGB)
-    roi_pil = Image.fromarray(roi_rgb)
-
     try:
         api_out = call_ocr_api(roi_pil)
         status = api_out.get("status", "unknown")
@@ -230,12 +185,13 @@ if run_ocr:
 
         st.info(f"OCR status: {status} — {message}")
 
+        # Annotate ROI only
         roi_annot = roi_pil.copy()
-        draw_roi = ImageDraw.Draw(roi_annot)
+        draw = ImageDraw.Draw(roi_annot)
         font = ImageFont.load_default()
 
         rows = []
-        detected_texts = []
+        texts = []
 
         for idx, det in enumerate(detections, start=1):
             box = det.get("box")
@@ -245,25 +201,19 @@ if run_ocr:
                 continue
 
             pts = [(int(p[0]), int(p[1])) for p in box]
-            draw_roi.line(pts + [pts[0]], fill=(0, 255, 0), width=2)  # OCR boxes still green for visibility
+            draw.line(pts + [pts[0]], fill=(0, 255, 0), width=2)
             tx, ty = pts[0]
-            draw_roi.text((tx, max(0, ty - 12)), f"{idx}. {text}", fill=(255, 255, 0), font=font)
+            draw.text((tx, max(0, ty - 12)), f"{idx}. {text}", fill=(255, 255, 0), font=font)
 
-            detected_texts.append(text)
-            rows.append({
-                "band_y1": y1,
-                "band_y2": y2,
-                "detection_id": idx,
-                "text": text,
-                "score": score,
-            })
+            texts.append(text)
+            rows.append({"detection_id": idx, "text": text, "score": score})
 
         st.subheader("ROI band sent to OCR (annotated)")
         st_image_auto(roi_annot)
 
-        if detected_texts:
+        if texts:
             st.subheader("Detected Text")
-            st.code(" | ".join(detected_texts))
+            st.code(" | ".join(texts))
 
         st.success(f"OCR complete — {len(rows)} detections")
 
