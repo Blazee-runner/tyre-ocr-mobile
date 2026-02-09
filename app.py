@@ -9,91 +9,32 @@ import pandas as pd
 from io import BytesIO
 import requests
 
-# =========================
-# Page Config
-# =========================
+# Read backend URL from Streamlit Secrets or ENV
+OCR_API_URL = None
+if "OCR_API_URL" in st.secrets:
+    OCR_API_URL = st.secrets["OCR_API_URL"]
+else:
+    OCR_API_URL = os.getenv("OCR_API_URL", "").strip()
+
 st.set_page_config(page_title="ROI_MRF", layout="wide")
 st.title("Mobile Camera OCR")
 
-# =========================
-# Scanner UI CSS (GUIDE ONLY)
-# =========================
-st.markdown("""
-<style>
-.scanner-wrapper {
-    position: relative;
-    width: 100%;
-    max-width: 420px;
-    margin: auto;
-}
-
-.scanner-box {
-    position: absolute;
-    top: 10%;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 22%;
-    height: 75%;
-    border: 3px solid #00ff66;
-    border-radius: 10px;
-    box-shadow: 0 0 12px rgba(0,255,102,0.7);
-    pointer-events: none;
-}
-
-.scanner-text {
-    text-align: center;
-    color: #00ff66;
-    font-weight: 600;
-    margin-top: 10px;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# =========================
-# SAFE IMAGE DISPLAY (CLOUD)
-# =========================
-def show_image_bytes(pil_img, caption=None):
-    buf = BytesIO()
-    pil_img.save(buf, format="PNG")
-    buf.seek(0)
-    st.image(buf, caption=caption, width=420)
-
-# =========================
-# Backend URL
-# =========================
-OCR_API_URL = st.secrets.get("OCR_API_URL") or os.getenv("OCR_API_URL", "").strip()
-
 with st.sidebar:
+    st.header("Display")
+    max_canvas_width = st.slider("Max canvas width (px)", 600, 2500, 1200)
+    keep_exif = st.checkbox("Respect EXIF orientation", True)
+
     st.header("Backend")
+    st.write("OCR API URL:")
     st.code(OCR_API_URL or "NOT SET")
 
 if not OCR_API_URL:
-    st.error("OCR_API_URL is not set")
+    st.error("OCR_API_URL is not set. Add it in Streamlit secrets or ENV.")
     st.stop()
 
-# =========================
-# Camera Input
-# =========================
-st.subheader("Scan Barcode / Text")
+st.subheader("Capturee from Phone Camera")
+cam = st.camera_input("Take a photo")
 
-st.markdown('<div class="scanner-wrapper">', unsafe_allow_html=True)
-
-cam = st.camera_input(
-    "Align barcode inside the vertical strip",
-    label_visibility="collapsed"
-)
-
-st.markdown('<div class="scanner-box"></div>', unsafe_allow_html=True)
-st.markdown('</div>', unsafe_allow_html=True)
-
-st.markdown(
-    '<div class="scanner-text">Align text inside the vertical strip</div>',
-    unsafe_allow_html=True
-)
-
-# =========================
-# Upload fallback
-# =========================
 st.subheader("Or Upload Image")
 uploaded = st.file_uploader(
     "Upload image",
@@ -101,96 +42,37 @@ uploaded = st.file_uploader(
 )
 
 if not cam and not uploaded:
-    st.info("Capture or upload an image to continue.")
+    st.info("Capture or upload an image to start.")
     st.stop()
 
-# =========================
-# Load Image
-# =========================
+# Choose source
 src = cam if cam else uploaded
 img = Image.open(src)
 
-# Fix EXIF if present
-try:
-    img = ImageOps.exif_transpose(img)
-except Exception:
-    pass
+if keep_exif:
+    try:
+        img = ImageOps.exif_transpose(img)
+    except Exception:
+        pass
 
 img = img.convert("RGB")
+orig_w, orig_h = img.size
+img_np = np.array(img)
 
-# =========================
-# FORCE PORTRAIT ORIENTATION
-# =========================
-def normalize_orientation(pil_img):
-    w, h = pil_img.size
-    if w > h:
-        pil_img = pil_img.rotate(90, expand=True)
-    return pil_img
+st.caption(f"Original image: **{orig_w} × {orig_h}px**")
 
-img = normalize_orientation(img)
 
-# =========================
-# CROP + OVERLAY FUNCTIONS
-# =========================
-def crop_vertical_strip(pil_img, strip_ratio=0.22):
-    w, h = pil_img.size
-    strip_w = int(w * strip_ratio)
-    x1 = (w - strip_w) // 2
-    x2 = x1 + strip_w
-    return pil_img.crop((x1, 0, x2, h))
 
-def draw_crop_overlay(pil_img, strip_ratio=0.22):
-    overlay = pil_img.copy()
-    draw = ImageDraw.Draw(overlay, "RGBA")
-
-    w, h = pil_img.size
-    strip_w = int(w * strip_ratio)
-    x1 = (w - strip_w) // 2
-    x2 = x1 + strip_w
-
-    # Darken outside area
-    draw.rectangle((0, 0, x1, h), fill=(0, 0, 0, 140))
-    draw.rectangle((x2, 0, w, h), fill=(0, 0, 0, 140))
-
-    # Green vertical guide
-    draw.rectangle((x1, 0, x2, h), outline=(0, 255, 0, 255), width=4)
-
-    return overlay
-
-# =========================
-# SHOW OVERLAY + CROPPED ROI
-# =========================
-st.subheader("Scan Guide (Green Area Will Be Cut)")
-overlay_img = draw_crop_overlay(img)
-show_image_bytes(overlay_img, "Align text inside green area")
-
-cropped_img = crop_vertical_strip(img)
-
-st.subheader("Actual Cropped ROI (Sent to OCR)")
-show_image_bytes(cropped_img, "Cropped vertical strip")
-
-# Use cropped image for OCR
-img = cropped_img
-
-# =========================
-# OCR API Call
-# =========================
-def call_ocr_api(pil_img):
+def call_ocr_api(pil_img: Image.Image):
     buf = BytesIO()
     pil_img.save(buf, format="PNG")
     buf.seek(0)
-
     files = {"file": ("roi.png", buf, "image/png")}
     r = requests.post(OCR_API_URL, files=files, timeout=120)
-
     if r.status_code != 200:
-        raise RuntimeError(f"OCR Error {r.status_code}: {r.text[:200]}")
-
+        raise RuntimeError(f"Backend HTTP {r.status_code}: {r.text[:400]}")
     return r.json()
 
-# =========================
-# Run OCR
-# =========================
 run_ocr = st.button("Run OCR")
 
 if run_ocr:
@@ -199,28 +81,35 @@ if run_ocr:
         draw = ImageDraw.Draw(annotated)
         font = ImageFont.load_default()
 
-        api_out = call_ocr_api(img)
+        rows = []
+        total = 0
 
-        detections = api_out.get("detections", [])
+        # FULL IMAGE OCR
+        roi_id = 1
+        roi_pil = img
+
+        api_out = call_ocr_api(roi_pil)
         status = api_out.get("status")
         message = api_out.get("message")
+        detections = api_out.get("detections", [])
 
         st.info(f"OCR status: {status} — {message}")
 
-        rows = []
         detected_texts = []
 
-        for i, det in enumerate(detections, start=1):
+        for idx, det in enumerate(detections, start=1):
             box = det["box"]
             text = det["text"]
             score = float(det["score"])
+            total += 1
 
             pts = [(int(p[0]), int(p[1])) for p in box]
             draw.line(pts + [pts[0]], fill=(0, 255, 0), width=2)
 
+            tx, ty = pts[0]
             draw.text(
-                (pts[0][0], max(0, pts[0][1] - 12)),
-                text,
+                (tx, max(0, ty - 12)),
+                f"{idx}. {text}",
                 fill=(255, 255, 0),
                 font=font
             )
@@ -228,33 +117,40 @@ if run_ocr:
             detected_texts.append(text)
 
             rows.append({
-                "id": i,
+                "ROI": roi_id,
+                "detection_id": idx,
                 "text": text,
-                "score": score
+                "score": score,
             })
-
-        show_image_bytes(annotated, "OCR Result")
+        st.image(annotated)
 
         if detected_texts:
             st.subheader("Detected Text")
-            st.code(" | ".join(detected_texts))
+            combined_text = " | ".join(detected_texts)
+            st.code(combined_text)
 
+
+        st.success(f"OCR complete — {total} detections")
+
+        # =========================
+        # Table + CSV Download
+        # =========================
         if rows:
             df = pd.DataFrame(rows)
+        
             st.subheader("Detections Table")
             st.dataframe(df, use_container_width=True)
-
-            csv = BytesIO()
-            df.to_csv(csv, index=False)
-
+        
+            csv_buf = BytesIO()
+            df.to_csv(csv_buf, index=False)
+        
             st.download_button(
-                "Download CSV",
-                csv.getvalue(),
-                "ocr_results.csv",
-                "text/csv"
+                label="Download OCR CSV",
+                data=csv_buf.getvalue(),
+                file_name="ocr_results.csv",
+                mime="text/csv"
             )
 
-        st.success(f"OCR complete — {len(rows)} detections")
 
     except Exception as e:
         st.error(f"OCR failed: {e}")
