@@ -8,6 +8,8 @@ import numpy as np
 import pandas as pd
 from io import BytesIO
 import requests
+st.set_page_config(page_title="ROI_MRF", layout="wide")
+st.title("Mobile Camera OCR")
 st.markdown("""
 <style>
 /* Scanner container */
@@ -48,8 +50,7 @@ if "OCR_API_URL" in st.secrets:
 else:
     OCR_API_URL = os.getenv("OCR_API_URL", "").strip()
 
-st.set_page_config(page_title="ROI_MRF", layout="wide")
-st.title("Mobile Camera OCR")
+
 
 with st.sidebar:
     st.header("Display")
@@ -196,6 +197,7 @@ if run_ocr:
 
     except Exception as e:
         st.error(f"OCR failed: {e}")
+
 
 
 
