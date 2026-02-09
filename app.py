@@ -48,16 +48,15 @@ st.markdown("""
 }
 </style>
 """, unsafe_allow_html=True)
+
+# =========================
+# SAFE IMAGE DISPLAY (CLOUD)
+# =========================
 def show_image_bytes(pil_img, caption=None):
     buf = BytesIO()
     pil_img.save(buf, format="PNG")
     buf.seek(0)
-    st.image(
-        buf,                 # pass BytesIO, not raw bytes
-        caption=caption,
-        width=420             # fixed width (matches scanner UI)
-    )
-
+    st.image(buf, caption=caption, width=420)
 
 # =========================
 # Backend URL
@@ -111,6 +110,7 @@ if not cam and not uploaded:
 src = cam if cam else uploaded
 img = Image.open(src)
 
+# Fix EXIF if present
 try:
     img = ImageOps.exif_transpose(img)
 except Exception:
@@ -119,7 +119,18 @@ except Exception:
 img = img.convert("RGB")
 
 # =========================
-# Vertical Strip Crop
+# FORCE PORTRAIT ORIENTATION
+# =========================
+def normalize_orientation(pil_img):
+    w, h = pil_img.size
+    if w > h:
+        pil_img = pil_img.rotate(90, expand=True)
+    return pil_img
+
+img = normalize_orientation(img)
+
+# =========================
+# CROP + OVERLAY FUNCTIONS
 # =========================
 def crop_vertical_strip(pil_img, strip_ratio=0.22):
     w, h = pil_img.size
@@ -128,11 +139,38 @@ def crop_vertical_strip(pil_img, strip_ratio=0.22):
     x2 = x1 + strip_w
     return pil_img.crop((x1, 0, x2, h))
 
-# APPLY CROP HERE (IMPORTANT)
-img = crop_vertical_strip(img)
+def draw_crop_overlay(pil_img, strip_ratio=0.22):
+    overlay = pil_img.copy()
+    draw = ImageDraw.Draw(overlay, "RGBA")
 
-st.subheader("Captured Scan Area (ROI)")
-show_image_bytes(img, "Captured Scan Area (ROI)")
+    w, h = pil_img.size
+    strip_w = int(w * strip_ratio)
+    x1 = (w - strip_w) // 2
+    x2 = x1 + strip_w
+
+    # Darken outside area
+    draw.rectangle((0, 0, x1, h), fill=(0, 0, 0, 140))
+    draw.rectangle((x2, 0, w, h), fill=(0, 0, 0, 140))
+
+    # Green vertical guide
+    draw.rectangle((x1, 0, x2, h), outline=(0, 255, 0, 255), width=4)
+
+    return overlay
+
+# =========================
+# SHOW OVERLAY + CROPPED ROI
+# =========================
+st.subheader("Scan Guide (Green Area Will Be Cut)")
+overlay_img = draw_crop_overlay(img)
+show_image_bytes(overlay_img, "Align text inside green area")
+
+cropped_img = crop_vertical_strip(img)
+
+st.subheader("Actual Cropped ROI (Sent to OCR)")
+show_image_bytes(cropped_img, "Cropped vertical strip")
+
+# Use cropped image for OCR
+img = cropped_img
 
 # =========================
 # OCR API Call
@@ -180,8 +218,12 @@ if run_ocr:
             pts = [(int(p[0]), int(p[1])) for p in box]
             draw.line(pts + [pts[0]], fill=(0, 255, 0), width=2)
 
-            tx, ty = pts[0]
-            draw.text((tx, max(0, ty - 12)), text, fill=(255, 255, 0), font=font)
+            draw.text(
+                (pts[0][0], max(0, pts[0][1] - 12)),
+                text,
+                fill=(255, 255, 0),
+                font=font
+            )
 
             detected_texts.append(text)
 
@@ -192,7 +234,6 @@ if run_ocr:
             })
 
         show_image_bytes(annotated, "OCR Result")
-
 
         if detected_texts:
             st.subheader("Detected Text")
@@ -217,7 +258,3 @@ if run_ocr:
 
     except Exception as e:
         st.error(f"OCR failed: {e}")
-
-
-
-
