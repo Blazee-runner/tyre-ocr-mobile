@@ -12,7 +12,6 @@ st.set_page_config(page_title="ROI_MRF", layout="wide")
 st.title("Mobile Camera OCR")
 st.markdown("""
 <style>
-/* Scanner container */
 .scanner-wrapper {
     position: relative;
     width: 100%;
@@ -20,16 +19,23 @@ st.markdown("""
     margin: auto;
 }
 
-/* Scanner frame */
+/* Camera container fix */
+.scanner-wrapper video,
+.scanner-wrapper img {
+    border-radius: 12px;
+}
+
+/* Center rectangle */
 .scanner-box {
     position: absolute;
-    top: 18%;
-    left: 8%;
-    width: 84%;
-    height: 38%;
+    top: 50%;
+    left: 50%;
+    width: 85%;
+    height: 35%;
+    transform: translate(-50%, -50%);
     border: 3px solid #00ff66;
-    border-radius: 8px;
-    box-shadow: 0 0 12px rgba(0,255,102,0.6);
+    border-radius: 14px;
+    box-shadow: 0 0 18px rgba(0,255,102,0.6);
     pointer-events: none;
 }
 
@@ -38,7 +44,8 @@ st.markdown("""
     text-align: center;
     color: #00ff66;
     font-weight: 600;
-    margin-top: 8px;
+    margin-top: 10px;
+    font-size: 14px;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -64,17 +71,24 @@ if not OCR_API_URL:
     st.error("OCR_API_URL is not set. Add it in Streamlit secrets or ENV.")
     st.stop()
 
-st.subheader("Scan Image")
+st.subheader("Scan Text")
 
 st.markdown('<div class="scanner-wrapper">', unsafe_allow_html=True)
 
 cam = st.camera_input(
     "Align text inside the box",
-    key="scanner_cam"
+    key="scanner_cam",
+    label_visibility="collapsed"
 )
 
 st.markdown('<div class="scanner-box"></div>', unsafe_allow_html=True)
 st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown(
+    '<div class="scanner-text">Align text inside the frame</div>',
+    unsafe_allow_html=True
+)
+
 
 st.markdown('<div class="scanner-text">Align text inside the frame</div>', unsafe_allow_html=True)
 
@@ -197,6 +211,7 @@ if run_ocr:
 
     except Exception as e:
         st.error(f"OCR failed: {e}")
+
 
 
 
