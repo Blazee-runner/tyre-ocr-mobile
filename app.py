@@ -122,7 +122,7 @@ def crop_vertical_strip(pil_img, strip_ratio=0.22):
 img = crop_vertical_strip(img)
 
 st.subheader("Captured Scan Area (ROI)")
-st.image(np.array(img), use_container_width=True)
+st.image(np.array(img), channels="RGB", use_container_width=True)
 
 # =========================
 # OCR API Call
@@ -181,7 +181,7 @@ if run_ocr:
                 "score": score
             })
 
-        st.image(np.array(annotated))
+        st.image(np.array(annotated), channels="RGB")
 
 
         if detected_texts:
@@ -207,4 +207,5 @@ if run_ocr:
 
     except Exception as e:
         st.error(f"OCR failed: {e}")
+
 
