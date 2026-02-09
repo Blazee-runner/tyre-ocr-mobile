@@ -8,6 +8,38 @@ import numpy as np
 import pandas as pd
 from io import BytesIO
 import requests
+st.markdown("""
+<style>
+/* Scanner container */
+.scanner-wrapper {
+    position: relative;
+    width: 100%;
+    max-width: 420px;
+    margin: auto;
+}
+
+/* Scanner frame */
+.scanner-box {
+    position: absolute;
+    top: 18%;
+    left: 8%;
+    width: 84%;
+    height: 38%;
+    border: 3px solid #00ff66;
+    border-radius: 8px;
+    box-shadow: 0 0 12px rgba(0,255,102,0.6);
+    pointer-events: none;
+}
+
+/* Instruction text */
+.scanner-text {
+    text-align: center;
+    color: #00ff66;
+    font-weight: 600;
+    margin-top: 8px;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # Read backend URL from Streamlit Secrets or ENV
 OCR_API_URL = None
@@ -33,13 +65,17 @@ if not OCR_API_URL:
 
 st.subheader("Scan Image")
 
-col1, col2, col3 = st.columns([1, 3, 1])
+st.markdown('<div class="scanner-wrapper">', unsafe_allow_html=True)
 
-with col2:
-    cam = st.camera_input(
-        "Align text inside the frame",
-        key="scanner_camera"
-    )
+cam = st.camera_input(
+    "Align text inside the box",
+    key="scanner_cam"
+)
+
+st.markdown('<div class="scanner-box"></div>', unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown('<div class="scanner-text">Align text inside the frame</div>', unsafe_allow_html=True)
 
 st.subheader("Or Upload Image")
 uploaded = st.file_uploader(
@@ -160,7 +196,6 @@ if run_ocr:
 
     except Exception as e:
         st.error(f"OCR failed: {e}")
-
 
 
 
