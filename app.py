@@ -130,6 +130,27 @@ img_np = np.array(img)
 
 st.caption(f"Original image: **{orig_w} × {orig_h}px**")
 
+# =========================
+# Vertical Strip Crop (ROI)
+# =========================
+def crop_vertical_strip(pil_img, strip_ratio=0.22):
+    """
+    Crops center vertical strip.
+    strip_ratio MUST match CSS width (22% = 0.22)
+    """
+    w, h = pil_img.size
+    strip_w = int(w * strip_ratio)
+    x1 = (w - strip_w) // 2
+    x2 = x1 + strip_w
+    return pil_img.crop((x1, 0, x2, h))
+    
+st.subheader("Scan Area (ROI)")
+roi_preview = crop_vertical_strip(img)
+st.image(
+    roi_preview,
+    caption="Only this vertical strip is sent to OCR",
+    use_container_width=True
+)
 
 
 def call_ocr_api(pil_img: Image.Image):
@@ -155,7 +176,7 @@ if run_ocr:
 
         # FULL IMAGE OCR
         roi_id = 1
-        roi_pil = img
+        roi_pil = crop_vertical_strip(img)
 
         api_out = call_ocr_api(roi_pil)
         status = api_out.get("status")
@@ -223,6 +244,7 @@ if run_ocr:
 
     except Exception as e:
         st.error(f"OCR failed: {e}")
+
 
 
 
