@@ -52,7 +52,12 @@ def show_image_bytes(pil_img, caption=None):
     buf = BytesIO()
     pil_img.save(buf, format="PNG")
     buf.seek(0)
-    st.image(buf.getvalue(), caption=caption, use_container_width=True)
+    st.image(
+        buf,                 # pass BytesIO, not raw bytes
+        caption=caption,
+        width=420             # fixed width (matches scanner UI)
+    )
+
 
 # =========================
 # Backend URL
@@ -212,6 +217,7 @@ if run_ocr:
 
     except Exception as e:
         st.error(f"OCR failed: {e}")
+
 
 
 
