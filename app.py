@@ -12,6 +12,7 @@ st.set_page_config(page_title="ROI_MRF", layout="wide")
 st.title("Mobile Camera OCR")
 st.markdown("""
 <style>
+/* Scanner container */
 .scanner-wrapper {
     position: relative;
     width: 100%;
@@ -19,24 +20,37 @@ st.markdown("""
     margin: auto;
 }
 
-/* Camera container fix */
-.scanner-wrapper video,
-.scanner-wrapper img {
-    border-radius: 12px;
-}
-
-/* Center rectangle */
+/* Vertical barcode scan strip */
 .scanner-box {
     position: absolute;
-    top: 50%;
+    top: 10%;
     left: 50%;
-    width: 85%;
-    height: 35%;
-    transform: translate(-50%, -50%);
+    transform: translateX(-50%);
+    width: 22%;              /* THIN vertical strip */
+    height: 75%;
     border: 3px solid #00ff66;
-    border-radius: 14px;
-    box-shadow: 0 0 18px rgba(0,255,102,0.6);
+    border-radius: 10px;
+    box-shadow: 
+        0 0 15px rgba(0,255,102,0.9),
+        inset 0 0 25px rgba(0,255,102,0.4);
     pointer-events: none;
+}
+
+/* Barcode scanner glow line */
+.scanner-box::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 4px;
+    background: #00ff66;
+    animation: scan 2s linear infinite;
+}
+
+@keyframes scan {
+    0% { top: 0; }
+    100% { top: 100%; }
 }
 
 /* Instruction text */
@@ -45,10 +59,10 @@ st.markdown("""
     color: #00ff66;
     font-weight: 600;
     margin-top: 10px;
-    font-size: 14px;
 }
 </style>
 """, unsafe_allow_html=True)
+
 
 # Read backend URL from Streamlit Secrets or ENV
 OCR_API_URL = None
@@ -209,6 +223,7 @@ if run_ocr:
 
     except Exception as e:
         st.error(f"OCR failed: {e}")
+
 
 
 
