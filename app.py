@@ -21,7 +21,6 @@ st.title("Mobile Camera OCR")
 
 with st.sidebar:
     st.header("Display")
-    max_canvas_width = st.slider("Max canvas width (px)", 600, 2500, 1200)
     keep_exif = st.checkbox("Respect EXIF orientation", True)
 
     st.header("Backend")
@@ -32,8 +31,15 @@ if not OCR_API_URL:
     st.error("OCR_API_URL is not set. Add it in Streamlit secrets or ENV.")
     st.stop()
 
-st.subheader("Capturee from Phone Camera")
-cam = st.camera_input("Take a photo")
+st.subheader("Scan Image")
+
+col1, col2, col3 = st.columns([1, 3, 1])
+
+with col2:
+    cam = st.camera_input(
+        "Align text inside the frame",
+        key="scanner_camera"
+    )
 
 st.subheader("Or Upload Image")
 uploaded = st.file_uploader(
@@ -154,6 +160,7 @@ if run_ocr:
 
     except Exception as e:
         st.error(f"OCR failed: {e}")
+
 
 
 
