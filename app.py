@@ -90,8 +90,6 @@ st.markdown(
 )
 
 
-st.markdown('<div class="scanner-text">Align text inside the frame</div>', unsafe_allow_html=True)
-
 st.subheader("Or Upload Image")
 uploaded = st.file_uploader(
     "Upload image",
@@ -211,6 +209,7 @@ if run_ocr:
 
     except Exception as e:
         st.error(f"OCR failed: {e}")
+
 
 
 
