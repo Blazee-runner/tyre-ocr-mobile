@@ -8,6 +8,10 @@ import numpy as np
 import pandas as pd
 from io import BytesIO
 import requests
+import cv2
+import av
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
+
 st.set_page_config(page_title="ROI_MRF", layout="wide")
 st.title("Mobile Camera OCR")
 st.markdown("""
@@ -89,11 +93,46 @@ st.subheader("Scan Text")
 
 st.markdown('<div class="scanner-wrapper">', unsafe_allow_html=True)
 
-cam = st.camera_input(
-    "Align text inside the box",
-    key="scanner_cam",
-    label_visibility="collapsed"
+st.subheader("Live Barcode Scanner")
+
+CAPTURE_KEY = "captured_frame"
+
+class BarcodeVideoProcessor(VideoProcessorBase):
+    def __init__(self):
+        self.cropped_frame = None
+
+    def recv(self, frame):
+        img = frame.to_ndarray(format="bgr24")
+        h, w, _ = img.shape
+
+        # --- Vertical strip crop (22%) ---
+        strip_ratio = 0.22
+        strip_w = int(w * strip_ratio)
+        x1 = (w - strip_w) // 2
+        x2 = x1 + strip_w
+
+        cropped = img[:, x1:x2]
+        self.cropped_frame = cropped
+
+        return av.VideoFrame.from_ndarray(cropped, format="bgr24")
+
+
+ctx = webrtc_streamer(
+    key="barcode-scanner",
+    video_processor_factory=BarcodeVideoProcessor,
+    media_stream_constraints={"video": True, "audio": False},
+    async_processing=True,
 )
+
+if ctx.video_processor:
+    if st.button("📸 Capture Scan"):
+        frame = ctx.video_processor.cropped_frame
+        if frame is not None:
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            pil_img = Image.fromarray(rgb)
+            st.session_state[CAPTURE_KEY] = pil_img
+            st.success("Scan captured!")
+
 
 st.markdown('<div class="scanner-box"></div>', unsafe_allow_html=True)
 st.markdown('</div>', unsafe_allow_html=True)
@@ -110,13 +149,17 @@ uploaded = st.file_uploader(
     type=["png", "jpg", "jpeg", "bmp", "tif", "tiff", "webp"]
 )
 
-if not cam and not uploaded:
-    st.info("Capture or upload an image to start.")
+img = None
+
+if CAPTURE_KEY in st.session_state:
+    img = st.session_state[CAPTURE_KEY]
+elif uploaded:
+    img = Image.open(uploaded)
+
+if img is None:
+    st.info("Scan barcode or upload image to continue.")
     st.stop()
 
-# Choose source
-src = cam if cam else uploaded
-img = Image.open(src)
 
 if keep_exif:
     try:
@@ -244,6 +287,7 @@ if run_ocr:
 
     except Exception as e:
         st.error(f"OCR failed: {e}")
+
 
 
 
