@@ -134,9 +134,6 @@ if ctx.video_processor:
             st.success("Scan captured!")
 
 
-st.markdown('<div class="scanner-box"></div>', unsafe_allow_html=True)
-st.markdown('</div>', unsafe_allow_html=True)
-
 st.markdown(
     '<div class="scanner-text">Align text inside the frame</div>',
     unsafe_allow_html=True
@@ -219,7 +216,7 @@ if run_ocr:
 
         # FULL IMAGE OCR
         roi_id = 1
-        roi_pil = crop_vertical_strip(img)
+        roi_pil = img
 
         api_out = call_ocr_api(roi_pil)
         status = api_out.get("status")
@@ -287,6 +284,7 @@ if run_ocr:
 
     except Exception as e:
         st.error(f"OCR failed: {e}")
+
 
 
 
