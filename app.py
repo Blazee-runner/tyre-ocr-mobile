@@ -1,39 +1,24 @@
-# app.py  (Streamlit Frontend - Barcode Scanner ROI, Streamlit 1.38 compatible)
 import warnings
 warnings.filterwarnings("ignore")
 
 import os
-import streamlit as st
-from PIL import Image, ImageOps, ImageDraw, ImageFont
+import threading
+from io import BytesIO
+
+import cv2
+import av
 import numpy as np
 import pandas as pd
-from io import BytesIO
 import requests
+import streamlit as st
+from PIL import Image, ImageOps, ImageDraw, ImageFont
+
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, ClientSettings
 
 
 # ============================================================
-# Helpers for Streamlit version compatibility
-# ============================================================
-def st_image_auto(img, caption=None):
-    """Use use_container_width if available, else fallback to use_column_width."""
-    try:
-        st.image(img, caption=caption, use_container_width=True)
-    except TypeError:
-        st.image(img, caption=caption, use_column_width=True)
-
-def st_df_auto(df):
-    try:
-        st.dataframe(df, use_container_width=True)
-    except TypeError:
-        st.dataframe(df)
-
-
-# ============================================================
-# Backend URL from Streamlit Secrets or ENV
-#   Set either:
-#     OCR_API_URL = https://xxxx.ngrok-free.app
-#   or:
-#     OCR_API_URL = https://xxxx.ngrok-free.app/ocr
+# Backend URL from Secrets/ENV
+#   OCR_API_URL can be base or base+/ocr
 # ============================================================
 def normalize_ocr_url(url: str) -> str:
     url = (url or "").strip()
@@ -44,131 +29,31 @@ def normalize_ocr_url(url: str) -> str:
         url += "/ocr"
     return url
 
-
-OCR_API_URL = None
-if "OCR_API_URL" in st.secrets:
-    OCR_API_URL = str(st.secrets["OCR_API_URL"]).strip()
-else:
-    OCR_API_URL = os.getenv("OCR_API_URL", "").strip()
-
+OCR_API_URL = (st.secrets.get("OCR_API_URL", "") if hasattr(st, "secrets") else "") or os.getenv("OCR_API_URL", "")
 OCR_API_URL = normalize_ocr_url(OCR_API_URL)
 
-
-# ============================================================
-# Streamlit UI
-# ============================================================
 st.set_page_config(page_title="ROI_MRF", layout="wide")
-st.title("Mobile Camera OCR (Barcode-Scanner ROI)")
+st.title("Live Camera OCR (Horizontal Scanner ROI)")
 
 with st.sidebar:
-    st.header("Display")
-    keep_exif = st.checkbox("Respect EXIF orientation", True)
+    st.header("Scanner ROI (Horizontal)")
+    st.caption("Live preview shows two horizontal lines. Only the band between them goes to OCR.")
+    band_height_pct = st.slider("Band height (%)", 5, 80, 20, 1)    # ROI thickness
+    band_center_pct = st.slider("Band center Y (%)", 0, 100, 50, 1)  # where band sits vertically
 
-    st.header("Scanner ROI")
-    st.caption("Two vertical lines mark ROI. Only the area between them is sent to OCR.")
-    roi_width_pct = st.slider("ROI width (%)", 5, 90, 22, 1)          # default 22%
-    roi_center_x_pct = st.slider("ROI center X (%)", 0, 100, 50, 1)   # default middle
+    st.header("Display")
+    keep_exif = st.checkbox("Respect EXIF orientation (captured frame)", True)
 
     st.header("Backend")
-    st.write("OCR API URL (effective):")
-    st.code(OCR_API_URL or "NOT SET")
+    st.code(OCR_API_URL or "OCR_API_URL NOT SET")
 
 if not OCR_API_URL:
-    st.error("OCR_API_URL is not set. Add it in Streamlit secrets or ENV (base URL or base+/ocr).")
-    st.stop()
-
-
-st.subheader("Capture from Phone Camera")
-cam = st.camera_input("Take a photo")
-
-st.subheader("Or Upload Image")
-uploaded = st.file_uploader(
-    "Upload image",
-    type=["png", "jpg", "jpeg", "bmp", "tif", "tiff", "webp"]
-)
-
-if not cam and not uploaded:
-    st.info("Capture or upload an image to start.")
+    st.error("OCR_API_URL is not set. Add it in Streamlit secrets or ENV.")
     st.stop()
 
 
 # ============================================================
-# Load image
-# ============================================================
-src = cam if cam else uploaded
-img = Image.open(src)
-
-if keep_exif:
-    try:
-        img = ImageOps.exif_transpose(img)
-    except Exception:
-        pass
-
-img = img.convert("RGB")
-orig_w, orig_h = img.size
-st.caption(f"Original image: **{orig_w} × {orig_h}px**")
-
-
-# ============================================================
-# Scanner overlay (two vertical lines + shaded outside)
-# ============================================================
-def draw_two_line_scanner(pil_img: Image.Image, x1: int, x2: int) -> Image.Image:
-    """
-    Draw two vertical green lines at x1 and x2 and shade outside ROI.
-    Return RGB PIL image (safe for Streamlit).
-    """
-    base = pil_img.convert("RGB").copy()
-    w, h = base.size
-
-    rgba = base.convert("RGBA")
-    overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    d = ImageDraw.Draw(overlay)
-
-    # Shade outside ROI
-    d.rectangle([0, 0, x1, h], fill=(0, 0, 0, 120))
-    d.rectangle([x2, 0, w, h], fill=(0, 0, 0, 120))
-
-    # Two vertical lines
-    d.line([x1, 0, x1, h], fill=(0, 255, 0, 255), width=4)
-    d.line([x2, 0, x2, h], fill=(0, 255, 0, 255), width=4)
-
-    return Image.alpha_composite(rgba, overlay).convert("RGB")
-
-
-# Compute ROI
-roi_w = int(orig_w * (roi_width_pct / 100.0))
-roi_w = max(30, min(roi_w, orig_w))
-
-center_x = int(orig_w * (roi_center_x_pct / 100.0))
-center_x = max(0, min(center_x, orig_w - 1))
-
-x1 = int(max(0, center_x - roi_w / 2))
-x2 = int(min(orig_w, x1 + roi_w))
-if x2 - x1 < roi_w:
-    x1 = int(max(0, x2 - roi_w))
-
-# Full height ROI (barcode scanner style)
-y1, y2 = 0, orig_h
-
-roi_pil = img.crop((x1, y1, x2, y2))
-overlay_img = draw_two_line_scanner(img, x1, x2)
-
-
-# Show preview + ROI
-c1, c2 = st.columns([2, 1], gap="large")
-with c1:
-    st.subheader("Preview (scanner ROI)")
-    st_image_auto(overlay_img)
-    st.caption(f"ROI X: {x1} → {x2} (width={x2-x1}px)")
-
-with c2:
-    st.subheader("ROI that will be OCR’d")
-    st_image_auto(roi_pil)
-    st.caption(f"ROI size: {roi_pil.size[0]} × {roi_pil.size[1]} px")
-
-
-# ============================================================
-# OCR Call
+# OCR call
 # ============================================================
 def call_ocr_api(pil_img: Image.Image):
     buf = BytesIO()
@@ -181,29 +66,150 @@ def call_ocr_api(pil_img: Image.Image):
     return r.json()
 
 
-run_ocr = st.button("Run OCR (ROI only)")
+# ============================================================
+# Live video processor
+# ============================================================
+class ScannerProcessor(VideoProcessorBase):
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.latest_bgr = None
+
+        # updated from Streamlit each rerun
+        self.band_height_pct = 20
+        self.band_center_pct = 50
+
+    def _compute_band(self, h: int):
+        band_h = int(h * (self.band_height_pct / 100.0))
+        band_h = max(10, min(band_h, h))
+
+        center = int(h * (self.band_center_pct / 100.0))
+        y1 = max(0, center - band_h // 2)
+        y2 = min(h, y1 + band_h)
+        if y2 - y1 < band_h:
+            y1 = max(0, y2 - band_h)
+        return y1, y2
+
+    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
+        img = frame.to_ndarray(format="bgr24")
+        h, w = img.shape[:2]
+
+        # store latest frame for capture
+        with self.lock:
+            self.latest_bgr = img.copy()
+
+        # draw overlay (two horizontal lines + shading)
+        y1, y2 = self._compute_band(h)
+
+        out = img.copy()
+
+        # shade outside band
+        overlay = out.copy()
+        cv2.rectangle(overlay, (0, 0), (w, y1), (0, 0, 0), -1)
+        cv2.rectangle(overlay, (0, y2), (w, h), (0, 0, 0), -1)
+        alpha = 0.35
+        out = cv2.addWeighted(overlay, alpha, out, 1 - alpha, 0)
+
+        # two horizontal lines
+        cv2.line(out, (0, y1), (w, y1), (0, 255, 0), 3)
+        cv2.line(out, (0, y2), (w, y2), (0, 255, 0), 3)
+
+        # tiny label
+        cv2.putText(out, "OCR BAND", (10, max(30, y1 - 10)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2, cv2.LINE_AA)
+
+        return av.VideoFrame.from_ndarray(out, format="bgr24")
+
+    def get_latest_frame(self):
+        with self.lock:
+            if self.latest_bgr is None:
+                return None
+            return self.latest_bgr.copy()
+
+
+# ============================================================
+# WebRTC settings
+# ============================================================
+client_settings = ClientSettings(
+    rtc_configuration={
+        "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+    },
+    media_stream_constraints={"video": True, "audio": False},
+)
+
+st.subheader("Live Camera Preview (with horizontal ROI lines)")
+
+webrtc_ctx = webrtc_streamer(
+    key="scanner",
+    client_settings=client_settings,
+    video_processor_factory=ScannerProcessor,
+    async_processing=True,
+)
+
+# push slider values into processor (so overlay updates live)
+if webrtc_ctx.video_processor:
+    webrtc_ctx.video_processor.band_height_pct = band_height_pct
+    webrtc_ctx.video_processor.band_center_pct = band_center_pct
+
+st.divider()
+
+run_ocr = st.button("Run OCR on the band (capture latest frame)")
 
 if run_ocr:
+    if not webrtc_ctx.video_processor:
+        st.error("Camera not ready. Start the camera stream first.")
+        st.stop()
+
+    frame_bgr = webrtc_ctx.video_processor.get_latest_frame()
+    if frame_bgr is None:
+        st.error("No frame received yet. Wait 1–2 seconds and try again.")
+        st.stop()
+
+    # compute ROI band on this captured frame
+    h, w = frame_bgr.shape[:2]
+    band_h = int(h * (band_height_pct / 100.0))
+    band_h = max(10, min(band_h, h))
+    center = int(h * (band_center_pct / 100.0))
+    y1 = max(0, center - band_h // 2)
+    y2 = min(h, y1 + band_h)
+    if y2 - y1 < band_h:
+        y1 = max(0, y2 - band_h)
+
+    roi_bgr = frame_bgr[y1:y2, :, :]  # full width between the two horizontal lines
+
+    # Convert to PIL for backend
+    roi_rgb = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2RGB)
+    roi_pil = Image.fromarray(roi_rgb)
+
+    if keep_exif:
+        # EXIF isn't present for live frames, but keep for safety if PIL got it
+        try:
+            roi_pil = ImageOps.exif_transpose(roi_pil)
+        except Exception:
+            pass
+
+    # Call OCR
     try:
         api_out = call_ocr_api(roi_pil)
-
         status = api_out.get("status", "unknown")
         message = api_out.get("message", "")
         detections = api_out.get("detections", [])
 
         st.info(f"OCR status: {status} — {message}")
 
-        # Annotate images
-        full_annot = img.copy()
+        # Prepare annotated full frame + ROI
+        full_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        full_pil = Image.fromarray(full_rgb)
+        full_annot = full_pil.copy()
         roi_annot = roi_pil.copy()
 
         draw_full = ImageDraw.Draw(full_annot)
         draw_roi = ImageDraw.Draw(roi_annot)
         font = ImageFont.load_default()
 
-        # Draw the ROI lines on full image
-        draw_full.line([x1, 0, x1, orig_h], fill=(0, 255, 0), width=4)
-        draw_full.line([x2, 0, x2, orig_h], fill=(0, 255, 0), width=4)
+        # Draw band lines on full image
+        W, H = full_annot.size
+        draw_full.line([(0, y1), (W, y1)], fill=(0, 255, 0), width=4)
+        draw_full.line([(0, y2), (W, y2)], fill=(0, 255, 0), width=4)
 
         rows = []
         detected_texts = []
@@ -212,40 +218,43 @@ if run_ocr:
             box = det.get("box")
             text = det.get("text", "")
             score = float(det.get("score", 0.0))
-
             if not box or len(box) < 4:
                 continue
 
-            # ROI coordinates
             pts_roi = [(int(p[0]), int(p[1])) for p in box]
             draw_roi.line(pts_roi + [pts_roi[0]], fill=(0, 255, 0), width=2)
             tx, ty = pts_roi[0]
             draw_roi.text((tx, max(0, ty - 12)), f"{idx}. {text}", fill=(255, 255, 0), font=font)
 
-            # Map back to full image (offset X by x1, Y by y1 (0))
-            pts_full = [(px + x1, py + y1) for (px, py) in pts_roi]
+            # Map ROI box back to full image: x offset = 0, y offset = y1
+            pts_full = [(px, py + y1) for (px, py) in pts_roi]
             draw_full.line(pts_full + [pts_full[0]], fill=(0, 255, 0), width=2)
             ftx, fty = pts_full[0]
             draw_full.text((ftx, max(0, fty - 12)), f"{idx}. {text}", fill=(255, 255, 0), font=font)
 
             detected_texts.append(text)
-
             rows.append({
-                "roi_x1": x1, "roi_y1": y1, "roi_x2": x2, "roi_y2": y2,
+                "band_y1": y1, "band_y2": y2,
                 "detection_id": idx,
                 "text": text,
                 "score": score,
             })
 
-        # Show output
-        r1, r2 = st.columns([2, 1], gap="large")
-        with r1:
-            st.subheader("Full image (OCR mapped back)")
-            st_image_auto(full_annot)
+        # Show results
+        c1, c2 = st.columns([2, 1], gap="large")
+        with c1:
+            st.subheader("Captured frame (OCR mapped back)")
+            try:
+                st.image(full_annot, use_container_width=True)
+            except TypeError:
+                st.image(full_annot, use_column_width=True)
 
-        with r2:
-            st.subheader("ROI annotated")
-            st_image_auto(roi_annot)
+        with c2:
+            st.subheader("ROI band sent to OCR")
+            try:
+                st.image(roi_annot, use_container_width=True)
+            except TypeError:
+                st.image(roi_annot, use_column_width=True)
 
         if detected_texts:
             st.subheader("Detected Text")
@@ -253,15 +262,16 @@ if run_ocr:
 
         st.success(f"OCR complete — {len(rows)} detections")
 
-        # Table + CSV download
         if rows:
             df = pd.DataFrame(rows)
             st.subheader("Detections Table")
-            st_df_auto(df)
+            try:
+                st.dataframe(df, use_container_width=True)
+            except TypeError:
+                st.dataframe(df)
 
             csv_buf = BytesIO()
             df.to_csv(csv_buf, index=False)
-
             st.download_button(
                 label="Download OCR CSV",
                 data=csv_buf.getvalue(),
