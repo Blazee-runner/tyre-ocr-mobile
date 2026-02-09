@@ -48,6 +48,11 @@ st.markdown("""
 }
 </style>
 """, unsafe_allow_html=True)
+def show_image_bytes(pil_img, caption=None):
+    buf = BytesIO()
+    pil_img.save(buf, format="PNG")
+    buf.seek(0)
+    st.image(buf.getvalue(), caption=caption, use_container_width=True)
 
 # =========================
 # Backend URL
@@ -122,7 +127,7 @@ def crop_vertical_strip(pil_img, strip_ratio=0.22):
 img = crop_vertical_strip(img)
 
 st.subheader("Captured Scan Area (ROI)")
-st.image(np.array(img), channels="RGB", use_container_width=True)
+show_image_bytes(img, "Captured Scan Area (ROI)")
 
 # =========================
 # OCR API Call
@@ -181,7 +186,7 @@ if run_ocr:
                 "score": score
             })
 
-        st.image(np.array(annotated), channels="RGB")
+        show_image_bytes(annotated, "OCR Result")
 
 
         if detected_texts:
@@ -207,5 +212,6 @@ if run_ocr:
 
     except Exception as e:
         st.error(f"OCR failed: {e}")
+
 
 
