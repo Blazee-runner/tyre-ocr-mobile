@@ -49,21 +49,15 @@ OCR_API_URL = normalize_ocr_url(OCR_API_URL)
 
 
 # ============================================================
-# UI styling (scanner look)
+# UI styling (clean scanner look)
 # ============================================================
 st.set_page_config(page_title="ROI_MRF", layout="wide")
 st.markdown(
     """
     <style>
       .block-container { padding-top: 1rem; padding-bottom: 2rem; }
-      .scanner-title { font-size: 1.6rem; font-weight: 700; margin-bottom: 0.2rem; }
+      .scanner-title { font-size: 1.45rem; font-weight: 700; margin-bottom: 0.25rem; }
       .scanner-sub { color: #9aa0a6; margin-top: 0; }
-      .scan-pill {
-        display:inline-block; padding:6px 10px; border-radius:999px;
-        background: rgba(0,255,0,0.10); border: 1px solid rgba(0,255,0,0.25);
-        color: #c8facc; font-size: 0.9rem;
-      }
-      .hint { color:#b0b6bd; font-size:0.95rem; }
       .stButton > button {
         border-radius: 14px;
         padding: 0.6rem 1rem;
@@ -75,7 +69,7 @@ st.markdown(
 )
 
 st.markdown('<div class="scanner-title">📷 Live Camera OCR Scanner</div>', unsafe_allow_html=True)
-st.markdown('<p class="scanner-sub">Align text/barcode inside the band. Only that band goes to OCR.</p>', unsafe_allow_html=True)
+st.markdown('<p class="scanner-sub">Only the horizontal band is sent to OCR.</p>', unsafe_allow_html=True)
 
 if not OCR_API_URL:
     st.error("OCR_API_URL is not set. Add it in Streamlit secrets or ENV.")
@@ -87,10 +81,8 @@ with st.sidebar:
     band_center_pct = st.slider("Band center Y (%)", 0, 100, 50, 1)
 
     st.header("Scanner Effects")
-    blur_strength = st.slider("Blur strength", 1, 31, 17, 2)  # must be odd-ish, we’ll fix below
+    blur_strength = st.slider("Blur strength", 1, 31, 17, 2)   # we force odd
     mask_darkness = st.slider("Mask darkness", 0.0, 0.9, 0.45, 0.05)
-    show_scan_line = st.checkbox("Animated scan line", True)
-    scan_speed = st.slider("Scan speed", 1, 25, 12, 1)
 
     st.header("Backend")
     st.code(OCR_API_URL)
@@ -119,24 +111,17 @@ def compute_band(h: int, band_height_pct: int, band_center_pct: int):
 
 
 # ============================================================
-# Live video processor with blur + translucent mask + scan line
+# Live video processor with blur + translucent mask + thin black lines
 # ============================================================
 class ScannerProcessor(VideoProcessorBase):
     def __init__(self):
         self.lock = threading.Lock()
         self.latest_bgr = None
 
-        # updated from Streamlit
         self.band_height_pct = 20
         self.band_center_pct = 50
         self.blur_strength = 17
         self.mask_darkness = 0.45
-        self.show_scan_line = True
-        self.scan_speed = 12
-
-        # scan line animation state
-        self._scan_y = None
-        self._scan_dir = 1
 
     def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
         img = frame.to_ndarray(format="bgr24")
@@ -148,71 +133,31 @@ class ScannerProcessor(VideoProcessorBase):
 
         y1, y2 = compute_band(h, self.band_height_pct, self.band_center_pct)
 
-        # --- Blur background (outside ROI) ---
+        # Blur everywhere
         k = int(self.blur_strength)
         if k % 2 == 0:
             k += 1
         k = max(1, min(k, 51))
         blurred = cv2.GaussianBlur(img, (k, k), 0)
 
-        # Start with blurred everywhere
+        # Start from blurred
         out = blurred.copy()
 
-        # Keep ROI band SHARP by copying from original
+        # Keep band sharp
         out[y1:y2, :, :] = img[y1:y2, :, :]
 
-        # Apply translucent dark mask outside ROI (scanner overlay)
-        if self.mask_darkness > 0:
+        # Dark translucent mask outside band
+        alpha = float(self.mask_darkness)
+        if alpha > 0:
             dark = np.zeros_like(out)
-            alpha = float(self.mask_darkness)
-            # top
             out[:y1] = cv2.addWeighted(out[:y1], 1 - alpha, dark[:y1], alpha, 0)
-            # bottom
             out[y2:] = cv2.addWeighted(out[y2:], 1 - alpha, dark[y2:], alpha, 0)
 
-        # --- Draw ROI boundary lines ---
-        line_color = (0, 255, 0)
-        cv2.line(out, (0, y1), (w, y1), line_color, 3)
-        cv2.line(out, (0, y2), (w, y2), line_color, 3)
-
-        # --- Corner brackets (scanner style) ---
-        pad = 14
-        br = 30  # bracket length
-        thickness = 3
-        # top-left
-        cv2.line(out, (pad, y1 + pad), (pad + br, y1 + pad), line_color, thickness)
-        cv2.line(out, (pad, y1 + pad), (pad, y1 + pad + br), line_color, thickness)
-        # top-right
-        cv2.line(out, (w - pad, y1 + pad), (w - pad - br, y1 + pad), line_color, thickness)
-        cv2.line(out, (w - pad, y1 + pad), (w - pad, y1 + pad + br), line_color, thickness)
-        # bottom-left
-        cv2.line(out, (pad, y2 - pad), (pad + br, y2 - pad), line_color, thickness)
-        cv2.line(out, (pad, y2 - pad), (pad, y2 - pad - br), line_color, thickness)
-        # bottom-right
-        cv2.line(out, (w - pad, y2 - pad), (w - pad - br, y2 - pad), line_color, thickness)
-        cv2.line(out, (w - pad, y2 - pad), (w - pad, y2 - pad - br), line_color, thickness)
-
-        # --- Animated scan line ---
-        if self.show_scan_line:
-            if self._scan_y is None or not (y1 <= self._scan_y <= y2):
-                self._scan_y = y1
-
-            self._scan_y += self._scan_dir * int(max(1, self.scan_speed))
-            if self._scan_y >= y2:
-                self._scan_y = y2
-                self._scan_dir = -1
-            elif self._scan_y <= y1:
-                self._scan_y = y1
-                self._scan_dir = 1
-
-            # glow effect: draw 3 lines
-            cv2.line(out, (0, self._scan_y), (w, self._scan_y), (0, 255, 0), 2)
-            cv2.line(out, (0, self._scan_y - 2), (w, self._scan_y - 2), (0, 255, 0), 1)
-            cv2.line(out, (0, self._scan_y + 2), (w, self._scan_y + 2), (0, 255, 0), 1)
-
-        # Small label
-        cv2.putText(out, "ALIGN CODE INSIDE BAND", (14, max(30, y1 - 10)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (160, 255, 160), 2, cv2.LINE_AA)
+        # ✅ Thin black lines (instead of green)
+        line_color = (0, 0, 0)     # black in BGR
+        thickness = 1              # thin
+        cv2.line(out, (0, y1), (w, y1), line_color, thickness)
+        cv2.line(out, (0, y2), (w, y2), line_color, thickness)
 
         return av.VideoFrame.from_ndarray(out, format="bgr24")
 
@@ -233,7 +178,7 @@ client_settings = ClientSettings(
 
 colA, colB = st.columns([3, 2], gap="large")
 with colA:
-    st.markdown('<span class="scan-pill">LIVE</span> <span class="hint">Allow camera access in your browser.</span>', unsafe_allow_html=True)
+    st.subheader("Live Camera Preview")
     webrtc_ctx = webrtc_streamer(
         key="scanner",
         client_settings=client_settings,
@@ -242,8 +187,8 @@ with colA:
     )
 
 with colB:
-    st.markdown("### ✅ Scan")
-    st.markdown("- Keep barcode/text within the green band\n- Press **Run OCR**")
+    st.subheader("Scan")
+    st.markdown("Align text/barcode inside the band and press **Run OCR**.")
     run_ocr = st.button("Run OCR (send ROI band)")
 
 # Push slider settings into processor (live)
@@ -253,8 +198,6 @@ if webrtc_ctx.video_processor:
     vp.band_center_pct = band_center_pct
     vp.blur_strength = blur_strength
     vp.mask_darkness = mask_darkness
-    vp.show_scan_line = show_scan_line
-    vp.scan_speed = scan_speed
 
 st.divider()
 
@@ -302,8 +245,7 @@ if run_ocr:
                 continue
 
             pts = [(int(p[0]), int(p[1])) for p in box]
-            draw_roi.line(pts + [pts[0]], fill=(0, 255, 0), width=2)
-
+            draw_roi.line(pts + [pts[0]], fill=(0, 255, 0), width=2)  # OCR boxes still green for visibility
             tx, ty = pts[0]
             draw_roi.text((tx, max(0, ty - 12)), f"{idx}. {text}", fill=(255, 255, 0), font=font)
 
