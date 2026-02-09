@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
-from PIL import Image, ImageOps, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont
 
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, ClientSettings
 
@@ -48,11 +48,11 @@ OCR_API_URL = (st.secrets.get("OCR_API_URL", "") if hasattr(st, "secrets") else 
 OCR_API_URL = normalize_ocr_url(OCR_API_URL)
 
 st.set_page_config(page_title="ROI_MRF", layout="wide")
-st.title("Live Camera OCR (Horizontal Scanner ROI)")
+st.title("Live Camera OCR (Horizontal ROI Band)")
 
 with st.sidebar:
     st.header("Scanner ROI (Horizontal)")
-    st.caption("Only the band between the 2 lines is visible + sent to OCR.")
+    st.caption("Live preview shows only the ROI band (between 2 lines). Only this band is sent to OCR.")
     band_height_pct = st.slider("Band height (%)", 5, 80, 20, 1)
     band_center_pct = st.slider("Band center Y (%)", 0, 100, 50, 1)
 
@@ -75,6 +75,18 @@ def call_ocr_api(pil_img: Image.Image):
     return r.json()
 
 
+def compute_band(h: int, band_height_pct: int, band_center_pct: int):
+    band_h = int(h * (band_height_pct / 100.0))
+    band_h = max(10, min(band_h, h))
+
+    center = int(h * (band_center_pct / 100.0))
+    y1 = max(0, center - band_h // 2)
+    y2 = min(h, y1 + band_h)
+    if y2 - y1 < band_h:
+        y1 = max(0, y2 - band_h)
+    return y1, y2
+
+
 # ============================================================
 # Live video processor
 # ============================================================
@@ -85,17 +97,6 @@ class ScannerProcessor(VideoProcessorBase):
         self.band_height_pct = 20
         self.band_center_pct = 50
 
-    def _compute_band(self, h: int):
-        band_h = int(h * (self.band_height_pct / 100.0))
-        band_h = max(10, min(band_h, h))
-
-        center = int(h * (self.band_center_pct / 100.0))
-        y1 = max(0, center - band_h // 2)
-        y2 = min(h, y1 + band_h)
-        if y2 - y1 < band_h:
-            y1 = max(0, y2 - band_h)
-        return y1, y2
-
     def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
         img = frame.to_ndarray(format="bgr24")
         h, w = img.shape[:2]
@@ -104,13 +105,13 @@ class ScannerProcessor(VideoProcessorBase):
         with self.lock:
             self.latest_bgr = img.copy()
 
-        y1, y2 = self._compute_band(h)
+        y1, y2 = compute_band(h, self.band_height_pct, self.band_center_pct)
 
         # ✅ Black out everything except the ROI band
-        out = np.zeros_like(img)               # whole frame black
-        out[y1:y2, :, :] = img[y1:y2, :, :]    # only band visible
+        out = np.zeros_like(img)
+        out[y1:y2, :, :] = img[y1:y2, :, :]
 
-        # draw the 2 horizontal lines on the band boundary
+        # draw 2 horizontal lines
         cv2.line(out, (0, y1), (w, y1), (0, 255, 0), 3)
         cv2.line(out, (0, y2), (w, y2), (0, 255, 0), 3)
 
@@ -131,7 +132,7 @@ client_settings = ClientSettings(
     media_stream_constraints={"video": True, "audio": False},
 )
 
-st.subheader("Live Camera Preview (only ROI band visible)")
+st.subheader("Live Camera Preview (ROI band only)")
 
 webrtc_ctx = webrtc_streamer(
     key="scanner",
@@ -147,7 +148,7 @@ if webrtc_ctx.video_processor:
 
 st.divider()
 
-run_ocr = st.button("Run OCR on band (capture latest frame)")
+run_ocr = st.button("Run OCR (send ROI band)")
 
 if run_ocr:
     if not webrtc_ctx.video_processor:
@@ -159,17 +160,11 @@ if run_ocr:
         st.error("No frame received yet. Wait 1–2 seconds and try again.")
         st.stop()
 
-    # Compute ROI on captured frame
+    # Compute band on captured frame
     h, w = frame_bgr.shape[:2]
-    band_h = int(h * (band_height_pct / 100.0))
-    band_h = max(10, min(band_h, h))
-    center = int(h * (band_center_pct / 100.0))
-    y1 = max(0, center - band_h // 2)
-    y2 = min(h, y1 + band_h)
-    if y2 - y1 < band_h:
-        y1 = max(0, y2 - band_h)
+    y1, y2 = compute_band(h, band_height_pct, band_center_pct)
 
-    # ROI is full width between the 2 horizontal lines
+    # ROI band (full width)
     roi_bgr = frame_bgr[y1:y2, :, :]
     roi_rgb = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2RGB)
     roi_pil = Image.fromarray(roi_rgb)
@@ -182,18 +177,10 @@ if run_ocr:
 
         st.info(f"OCR status: {status} — {message}")
 
-        # Prepare annotated FULL image ONLY (no ROI preview)
-        full_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        full_pil = Image.fromarray(full_rgb)
-        full_annot = full_pil.copy()
-
-        draw_full = ImageDraw.Draw(full_annot)
+        # ✅ Annotate ROI ONLY
+        roi_annot = roi_pil.copy()
+        draw_roi = ImageDraw.Draw(roi_annot)
         font = ImageFont.load_default()
-
-        # Draw band boundary lines
-        W, H = full_annot.size
-        draw_full.line([(0, y1), (W, y1)], fill=(0, 255, 0), width=4)
-        draw_full.line([(0, y2), (W, y2)], fill=(0, 255, 0), width=4)
 
         rows = []
         detected_texts = []
@@ -205,24 +192,24 @@ if run_ocr:
             if not box or len(box) < 4:
                 continue
 
-            # box is ROI coordinates → map to full image by adding y1
             pts_roi = [(int(p[0]), int(p[1])) for p in box]
-            pts_full = [(px, py + y1) for (px, py) in pts_roi]
+            draw_roi.line(pts_roi + [pts_roi[0]], fill=(0, 255, 0), width=2)
 
-            draw_full.line(pts_full + [pts_full[0]], fill=(0, 255, 0), width=2)
-            ftx, fty = pts_full[0]
-            draw_full.text((ftx, max(0, fty - 12)), f"{idx}. {text}", fill=(255, 255, 0), font=font)
+            tx, ty = pts_roi[0]
+            draw_roi.text((tx, max(0, ty - 12)), f"{idx}. {text}", fill=(255, 255, 0), font=font)
 
             detected_texts.append(text)
             rows.append({
-                "band_y1": y1, "band_y2": y2,
+                "band_y1": y1,
+                "band_y2": y2,
                 "detection_id": idx,
                 "text": text,
                 "score": score,
             })
 
-        st.subheader("Captured frame (OCR mapped back)")
-        st_image_auto(full_annot)
+        # ✅ Show ONLY ROI band result (what was sent to OCR)
+        st.subheader("ROI band sent to OCR (annotated)")
+        st_image_auto(roi_annot)
 
         if detected_texts:
             st.subheader("Detected Text")
