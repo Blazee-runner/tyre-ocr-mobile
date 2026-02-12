@@ -19,7 +19,7 @@ OCR_API_URL = st.secrets.get(
 ).rstrip("/")
 
 if not OCR_API_URL:
-    st.error("❌ OCR_API_URL not set in secrets or env")
+    st.error("❌ OCR_API_URL not set")
     st.stop()
 
 # =====================================================
@@ -38,22 +38,38 @@ with st.sidebar:
     st.code(OCR_API_URL)
 
 # =====================================================
-# IMAGE INPUT
+# IMAGE SOURCE (UPLOAD OR CAMERA)
 # =====================================================
-uploaded = st.file_uploader(
-    "Upload image",
-    type=["jpg", "jpeg", "png", "bmp", "tiff", "webp"]
+st.subheader("📸 Image Source")
+
+src_mode = st.radio(
+    "Choose input source",
+    ["Upload Image", "Capture from Camera"],
+    horizontal=True
 )
 
-if not uploaded:
-    st.info("Upload an image to start")
+img = None
+
+if src_mode == "Upload Image":
+    uploaded = st.file_uploader(
+        "Upload image",
+        type=["jpg", "jpeg", "png", "bmp", "tiff", "webp"]
+    )
+    if uploaded:
+        img = Image.open(uploaded)
+
+else:
+    cam = st.camera_input("Take a photo")
+    if cam:
+        img = Image.open(cam)
+
+if img is None:
+    st.info("Upload or capture an image to continue")
     st.stop()
 
 # =====================================================
 # LOAD IMAGE SAFELY
 # =====================================================
-img = Image.open(uploaded)
-
 if keep_exif:
     try:
         img = ImageOps.exif_transpose(img)
@@ -62,7 +78,7 @@ if keep_exif:
 
 img = img.convert("RGB")
 
-# Re-encode (important for canvas stability)
+# Re-encode for canvas stability
 buf = BytesIO()
 img.save(buf, format="PNG")
 buf.seek(0)
@@ -134,7 +150,7 @@ if st.button("Run CRAFT + OCR Pipeline 🚀"):
             })
 
     if not rois:
-        st.error("Invalid ROIs")
+        st.error("Invalid ROI selection")
         st.stop()
 
     # -----------------------------
@@ -144,15 +160,10 @@ if st.button("Run CRAFT + OCR Pipeline 🚀"):
     img.save(img_buf, format="JPEG")
     img_buf.seek(0)
 
-    files = {
-        "file": ("image.jpg", img_buf, "image/jpeg")
-    }
+    files = {"file": ("image.jpg", img_buf, "image/jpeg")}
+    data = {"rois": json.dumps(rois)}
 
-    data = {
-        "rois": json.dumps(rois)
-    }
-
-    with st.spinner("Running full OCR pipeline... ⏳"):
+    with st.spinner("Running OCR pipeline... ⏳"):
         r = requests.post(
             f"{OCR_API_URL}/pipeline",
             files=files,
@@ -161,11 +172,8 @@ if st.button("Run CRAFT + OCR Pipeline 🚀"):
         )
 
     if r.status_code != 200:
-        st.error(f"Backend failed: {r.text}")
+        st.error(f"Backend error: {r.text}")
         st.stop()
 
-    out = r.json()
-
     st.success("Pipeline completed 🎉")
-    st.json(out)
-
+    st.json(r.json())
