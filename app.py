@@ -34,10 +34,8 @@ with st.sidebar:
     stroke_color = st.color_picker("ROI color", "#FF0000")
 
     st.header("Display")
-    max_canvas_width = st.slider(
-        "Max canvas width (px)",
-        600, 1400, 1000   # 🔥 DO NOT exceed 1400
-    )
+    max_canvas_width = st.slider("Max canvas width (px)", 600, 1400, 1000)
+    min_canvas_height = 250  # 🔥 FIX
     keep_exif = st.checkbox("Respect EXIF orientation", True)
 
     st.header("Backend")
@@ -87,7 +85,7 @@ if keep_exif:
 
 img = img.convert("RGB")
 
-# 🔥 HARD RESET IMAGE (canvas fix)
+# 🔥 HARD RESET IMAGE (canvas stability)
 buf = BytesIO()
 img.save(buf, format="PNG")
 buf.seek(0)
@@ -97,27 +95,32 @@ orig_w, orig_h = img.size
 st.caption(f"Original image size: **{orig_w} × {orig_h}px**")
 
 # =====================================================
-# SCALE FOR CANVAS (SAFE)
+# SCALE FOR CANVAS
 # =====================================================
 scale = min(1.0, max_canvas_width / orig_w)
-canvas_w = int(orig_w * scale)
-canvas_h = int(orig_h * scale)
+img_w = int(orig_w * scale)
+img_h = int(orig_h * scale)
 
-# 🔥 FORCE NumPy → PIL roundtrip
+canvas_w = img_w
+canvas_h = max(img_h, min_canvas_height)  # 🔥 FIX
+
+# =====================================================
+# CENTER IMAGE VERTICALLY
+# =====================================================
 img_np = np.array(img)
-img_display = Image.fromarray(img_np).resize(
-    (canvas_w, canvas_h),
-    Image.BILINEAR
-)
+img_resized = Image.fromarray(img_np).resize((img_w, img_h), Image.BILINEAR)
 
-# 🔍 SANITY CHECK (comment out later if you want)
-st.image(img_display, caption="Canvas background preview")
+canvas_bg = Image.new("RGB", (canvas_w, canvas_h), (30, 30, 30))
+y_offset = (canvas_h - img_h) // 2
+canvas_bg.paste(img_resized, (0, y_offset))
+
+st.image(canvas_bg, caption="Canvas background preview")
 
 # =====================================================
 # DRAW ROI CANVAS
 # =====================================================
 canvas = st_canvas(
-    background_image=img_display,
+    background_image=canvas_bg,
     height=canvas_h,
     width=canvas_w,
     drawing_mode="rect",
@@ -140,14 +143,11 @@ if st.button("Run CRAFT + OCR Pipeline 🚀"):
         st.warning("Draw at least one ROI")
         st.stop()
 
-    # -----------------------------
-    # Convert ROIs to backend coords
-    # -----------------------------
     rois = []
 
     for obj in objects:
         left = int(obj["left"] / scale)
-        top = int(obj["top"] / scale)
+        top = int((obj["top"] - y_offset) / scale)  # 🔥 FIX OFFSET
         width = int(obj["width"] * obj.get("scaleX", 1) / scale)
         height = int(obj["height"] * obj.get("scaleY", 1) / scale)
 
@@ -168,9 +168,6 @@ if st.button("Run CRAFT + OCR Pipeline 🚀"):
         st.error("Invalid ROI selection")
         st.stop()
 
-    # -----------------------------
-    # Send to FastAPI
-    # -----------------------------
     img_buf = BytesIO()
     img.save(img_buf, format="JPEG")
     img_buf.seek(0)
