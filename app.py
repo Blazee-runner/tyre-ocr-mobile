@@ -119,9 +119,12 @@ st.image(canvas_bg, caption="Canvas background preview")
 # =====================================================
 # DRAW ROI CANVAS
 # =====================================================
+# convert canvas background to numpy (🔥 REQUIRED FOR STREAMLIT CLOUD)
+canvas_bg_np = np.array(canvas_bg)
+
 canvas = st_canvas(
-    background_image=canvas_bg,
-    background_color="rgba(0, 0, 0, 0)",  # 🔥 THIS IS THE FIX
+    background_image=canvas_bg_np,   # ✅ NUMPY, NOT PIL
+    background_color="rgba(0,0,0,0)",
     height=canvas_h,
     width=canvas_w,
     drawing_mode="rect",
@@ -131,6 +134,7 @@ canvas = st_canvas(
     update_streamlit=True,
     key=f"roi_canvas_{src_key}"
 )
+
 
 
 objects = canvas.json_data["objects"] if canvas.json_data else []
@@ -191,4 +195,5 @@ if st.button("Run CRAFT + OCR Pipeline 🚀"):
 
     st.success("Pipeline completed 🎉")
     st.json(r.json())
+
 
