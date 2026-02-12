@@ -8,11 +8,14 @@ import numpy as np
 from io import BytesIO
 
 # =====================================================
-# CONFIG
+# PAGE CONFIG
 # =====================================================
-st.set_page_config(page_title="ROI → OCR Pipeline", layout="wide")
+st.set_page_config(page_title="ROI → CRAFT → OCR", layout="wide")
 st.title("ROI → CRAFT → OCR Pipeline")
 
+# =====================================================
+# BACKEND URL
+# =====================================================
 OCR_API_URL = st.secrets.get(
     "OCR_API_URL",
     os.getenv("OCR_API_URL", "")
@@ -31,14 +34,17 @@ with st.sidebar:
     stroke_color = st.color_picker("ROI color", "#FF0000")
 
     st.header("Display")
-    max_canvas_width = st.slider("Max canvas width", 600, 2500, 1200)
+    max_canvas_width = st.slider(
+        "Max canvas width (px)",
+        600, 1400, 1000   # 🔥 DO NOT exceed 1400
+    )
     keep_exif = st.checkbox("Respect EXIF orientation", True)
 
     st.header("Backend")
     st.code(OCR_API_URL)
 
 # =====================================================
-# IMAGE SOURCE (UPLOAD OR CAMERA)
+# IMAGE SOURCE
 # =====================================================
 st.subheader("📸 Image Source")
 
@@ -49,6 +55,7 @@ src_mode = st.radio(
 )
 
 img = None
+src_key = "none"
 
 if src_mode == "Upload Image":
     uploaded = st.file_uploader(
@@ -57,18 +64,20 @@ if src_mode == "Upload Image":
     )
     if uploaded:
         img = Image.open(uploaded)
+        src_key = uploaded.name
 
 else:
     cam = st.camera_input("Take a photo")
     if cam:
         img = Image.open(cam)
+        src_key = "camera"
 
 if img is None:
     st.info("Upload or capture an image to continue")
     st.stop()
 
 # =====================================================
-# LOAD IMAGE SAFELY
+# SAFE IMAGE LOAD
 # =====================================================
 if keep_exif:
     try:
@@ -78,25 +87,31 @@ if keep_exif:
 
 img = img.convert("RGB")
 
-# Re-encode for canvas stability
+# 🔥 HARD RESET IMAGE (canvas fix)
 buf = BytesIO()
 img.save(buf, format="PNG")
 buf.seek(0)
 img = Image.open(buf).convert("RGB")
 
 orig_w, orig_h = img.size
-img_np = np.array(img)
-
 st.caption(f"Original image size: **{orig_w} × {orig_h}px**")
 
 # =====================================================
-# SCALE FOR CANVAS
+# SCALE FOR CANVAS (SAFE)
 # =====================================================
 scale = min(1.0, max_canvas_width / orig_w)
 canvas_w = int(orig_w * scale)
 canvas_h = int(orig_h * scale)
 
-img_display = img.resize((canvas_w, canvas_h), Image.BILINEAR)
+# 🔥 FORCE NumPy → PIL roundtrip
+img_np = np.array(img)
+img_display = Image.fromarray(img_np).resize(
+    (canvas_w, canvas_h),
+    Image.BILINEAR
+)
+
+# 🔍 SANITY CHECK (comment out later if you want)
+st.image(img_display, caption="Canvas background preview")
 
 # =====================================================
 # DRAW ROI CANVAS
@@ -110,7 +125,7 @@ canvas = st_canvas(
     stroke_color=stroke_color,
     fill_color="rgba(0,0,0,0)",
     update_streamlit=True,
-    key="roi_canvas"
+    key=f"roi_canvas_{src_key}"
 )
 
 objects = canvas.json_data["objects"] if canvas.json_data else []
