@@ -119,11 +119,12 @@ st.image(canvas_bg, caption="Canvas background preview")
 # =====================================================
 # DRAW ROI CANVAS
 # =====================================================
-canvas_bg_np = np.array(canvas_bg)
-
+# =====================================================
+# DRAW ROI CANVAS  (FINAL FIX)
+# =====================================================
 canvas = st_canvas(
-    background_image=canvas_bg_np.tolist(),  # ✅ FIX
-    background_color="rgba(0,0,0,0)",
+    background_image=img_resized,              # ✅ PIL IMAGE ONLY
+    background_color="rgba(0, 0, 0, 0)",        # ✅ TRANSPARENT
     height=canvas_h,
     width=canvas_w,
     drawing_mode="rect",
@@ -133,6 +134,7 @@ canvas = st_canvas(
     update_streamlit=True,
     key=f"roi_canvas_{src_key}"
 )
+
 
 
 
@@ -195,6 +197,7 @@ if st.button("Run CRAFT + OCR Pipeline 🚀"):
 
     st.success("Pipeline completed 🎉")
     st.json(r.json())
+
 
 
 
