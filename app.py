@@ -121,6 +121,7 @@ st.image(canvas_bg, caption="Canvas background preview")
 # =====================================================
 canvas = st_canvas(
     background_image=canvas_bg,
+    background_color="rgba(0, 0, 0, 0)",  # 🔥 THIS IS THE FIX
     height=canvas_h,
     width=canvas_w,
     drawing_mode="rect",
@@ -130,6 +131,7 @@ canvas = st_canvas(
     update_streamlit=True,
     key=f"roi_canvas_{src_key}"
 )
+
 
 objects = canvas.json_data["objects"] if canvas.json_data else []
 st.write(f"**{len(objects)} ROI(s) drawn**")
@@ -189,3 +191,4 @@ if st.button("Run CRAFT + OCR Pipeline 🚀"):
 
     st.success("Pipeline completed 🎉")
     st.json(r.json())
+
