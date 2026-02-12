@@ -1,17 +1,14 @@
 import os
-import json
 import requests
 import streamlit as st
-from streamlit_drawable_canvas import st_canvas
 from PIL import Image, ImageOps
-import numpy as np
 from io import BytesIO
 
 # =====================================================
 # PAGE CONFIG
 # =====================================================
-st.set_page_config(page_title="ROI → CRAFT → OCR", layout="wide")
-st.title("ROI → CRAFT → OCR Pipeline")
+st.set_page_config(page_title="Auto ROI OCR", layout="centered")
+st.title("📸 Auto ROI → CRAFT → OCR")
 
 # =====================================================
 # BACKEND URL
@@ -26,25 +23,9 @@ if not OCR_API_URL:
     st.stop()
 
 # =====================================================
-# SIDEBAR
-# =====================================================
-with st.sidebar:
-    st.header("ROI Settings")
-    stroke_width = st.slider("ROI border width", 1, 10, 3)
-    stroke_color = st.color_picker("ROI color", "#FF0000")
-
-    st.header("Display")
-    max_canvas_width = st.slider("Max canvas width (px)", 600, 1400, 1000)
-    min_canvas_height = 250  # 🔥 FIX
-    keep_exif = st.checkbox("Respect EXIF orientation", True)
-
-    st.header("Backend")
-    st.code(OCR_API_URL)
-
-# =====================================================
 # IMAGE SOURCE
 # =====================================================
-st.subheader("📸 Image Source")
+st.subheader("Image Source")
 
 src_mode = st.radio(
     "Choose input source",
@@ -53,7 +34,6 @@ src_mode = st.radio(
 )
 
 img = None
-src_key = "none"
 
 if src_mode == "Upload Image":
     uploaded = st.file_uploader(
@@ -62,13 +42,11 @@ if src_mode == "Upload Image":
     )
     if uploaded:
         img = Image.open(uploaded)
-        src_key = uploaded.name
 
 else:
     cam = st.camera_input("Take a photo")
     if cam:
         img = Image.open(cam)
-        src_key = "camera"
 
 if img is None:
     st.info("Upload or capture an image to continue")
@@ -77,117 +55,30 @@ if img is None:
 # =====================================================
 # SAFE IMAGE LOAD
 # =====================================================
-if keep_exif:
-    try:
-        img = ImageOps.exif_transpose(img)
-    except Exception:
-        pass
+try:
+    img = ImageOps.exif_transpose(img)
+except Exception:
+    pass
 
 img = img.convert("RGB")
 
-# 🔥 HARD RESET IMAGE (canvas stability)
-buf = BytesIO()
-img.save(buf, format="PNG")
-buf.seek(0)
-img = Image.open(buf).convert("RGB")
-
-orig_w, orig_h = img.size
-st.caption(f"Original image size: **{orig_w} × {orig_h}px**")
+st.image(img, caption="Input Image", use_column_width=True)
 
 # =====================================================
-# SCALE FOR CANVAS
+# RUN AUTO OCR PIPELINE
 # =====================================================
-scale = min(1.0, max_canvas_width / orig_w)
-img_w = int(orig_w * scale)
-img_h = int(orig_h * scale)
-
-canvas_w = img_w
-canvas_h = max(img_h, min_canvas_height)  # 🔥 FIX
-
-# =====================================================
-# CENTER IMAGE VERTICALLY
-# =====================================================
-img_np = np.array(img)
-img_resized = Image.fromarray(img_np).resize((img_w, img_h), Image.BILINEAR)
-
-canvas_bg = Image.new("RGB", (canvas_w, canvas_h), (30, 30, 30))
-y_offset = (canvas_h - img_h) // 2
-canvas_bg.paste(img_resized, (0, y_offset))
-
-st.image(canvas_bg, caption="Canvas background preview")
-
-# =====================================================
-# DRAW ROI CANVAS
-# =====================================================
-# =====================================================
-# DRAW ROI CANVAS  (FINAL FIX)
-# =====================================================
-canvas = st_canvas(
-    background_image=img_resized,              # ✅ PIL IMAGE ONLY
-    background_color="rgba(0, 0, 0, 0)",        # ✅ TRANSPARENT
-    height=canvas_h,
-    width=canvas_w,
-    drawing_mode="rect",
-    stroke_width=stroke_width,
-    stroke_color=stroke_color,
-    fill_color="rgba(0,0,0,0)",
-    update_streamlit=True,
-    key=f"roi_canvas_{src_key}"
-)
-
-
-
-
-
-objects = canvas.json_data["objects"] if canvas.json_data else []
-st.write(f"**{len(objects)} ROI(s) drawn**")
-
-# =====================================================
-# RUN PIPELINE
-# =====================================================
-if st.button("Run CRAFT + OCR Pipeline 🚀"):
-
-    if not objects:
-        st.warning("Draw at least one ROI")
-        st.stop()
-
-    rois = []
-
-    for obj in objects:
-        left = int(obj["left"] / scale)
-        top = int((obj["top"] - y_offset) / scale)  # 🔥 FIX OFFSET
-        width = int(obj["width"] * obj.get("scaleX", 1) / scale)
-        height = int(obj["height"] * obj.get("scaleY", 1) / scale)
-
-        x1 = max(0, left)
-        y1 = max(0, top)
-        x2 = min(orig_w, x1 + width)
-        y2 = min(orig_h, y1 + height)
-
-        if x2 > x1 and y2 > y1:
-            rois.append({
-                "x1": x1,
-                "y1": y1,
-                "x2": x2,
-                "y2": y2
-            })
-
-    if not rois:
-        st.error("Invalid ROI selection")
-        st.stop()
+if st.button("Run Auto OCR 🚀"):
 
     img_buf = BytesIO()
     img.save(img_buf, format="JPEG")
     img_buf.seek(0)
 
     files = {"file": ("image.jpg", img_buf, "image/jpeg")}
-    data = {"rois": json.dumps(rois)}
 
-    with st.spinner("Running OCR pipeline... ⏳"):
+    with st.spinner("Running CRAFT + OCR pipeline... ⏳"):
         r = requests.post(
             f"{OCR_API_URL}/pipeline",
             files=files,
-            data=data,
             timeout=600
         )
 
@@ -195,9 +86,25 @@ if st.button("Run CRAFT + OCR Pipeline 🚀"):
         st.error(f"Backend error: {r.text}")
         st.stop()
 
-    st.success("Pipeline completed 🎉")
-    st.json(r.json())
+    result = r.json()
 
+    st.success("OCR completed 🎉")
 
+    # =================================================
+    # SHOW RESULTS
+    # =================================================
+    if "stitched_image_url" in result:
+        st.subheader("📄 OCR Result Image")
+        st.image(result["stitched_image_url"], use_column_width=True)
 
+    if "text" in result:
+        st.subheader("📝 Extracted Text")
+        st.text_area("OCR Output", result["text"], height=200)
 
+    if "excel_url" in result:
+        st.subheader("📊 Download")
+        st.download_button(
+            "Download Excel",
+            data=requests.get(result["excel_url"]).content,
+            file_name="ocr_output.xlsx"
+        )
